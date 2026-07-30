@@ -1,0 +1,44 @@
+# ─────────────────────────────────────────────────────────────────────────────
+#  Testing environment overrides
+# ─────────────────────────────────────────────────────────────────────────────
+
+app:
+  debug: true
+  log_level: WARNING      # Reduce noise during tests
+  log_format: console
+
+api:
+  docs_url: "/docs"
+  redoc_url: "/redoc"
+
+postgres:
+  pool_size: 5
+  max_overflow: 0
+  pool_timeout: 10
+  echo: false
+
+redis:
+  max_connections: 10
+
+observability:
+  enabled: false          # Disable telemetry during unit tests
+  langfuse_enabled: false
+  traces_enabled: false
+  metrics_enabled: false
+
+agent:
+  max_cost_usd: 0.10      # Very low ceiling during tests
+  execution_timeout_seconds: 30
+  max_recursion_depth: 5
+
+security:
+  rate_limit_requests_per_minute: 10000
+  csrf_enabled: false
+  prompt_injection_detection_enabled: false
+
+llm:
+  request_timeout: 10     # Fast timeouts in tests
+
+scraping:
+  cache_ttl: 0            # No caching in tests
+  rate_limit_rps: 100     # No rate limiting in tests
