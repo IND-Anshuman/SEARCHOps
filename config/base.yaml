@@ -1,0 +1,156 @@
+# ─────────────────────────────────────────────────────────────────────────────
+#  SEARCHOps — Base Configuration (all environments inherit from this)
+#  Values here are overridden by environment-specific YAML and .env variables.
+# ─────────────────────────────────────────────────────────────────────────────
+
+app:
+  name: searchops
+  version: "0.1.0"
+  description: "Enterprise Autonomous Technology Intelligence Platform"
+  debug: false
+  log_level: INFO
+  log_format: json
+
+api:
+  host: "0.0.0.0"
+  port: 8000
+  workers: 4
+  reload: false
+  root_path: ""
+  docs_url: "/docs"
+  redoc_url: "/redoc"
+  openapi_url: "/openapi.json"
+  allowed_origins:
+    - "http://localhost:3000"
+    - "http://localhost:8080"
+  cors_allow_credentials: true
+  cors_allow_methods:
+    - GET
+    - POST
+    - PUT
+    - PATCH
+    - DELETE
+    - OPTIONS
+  cors_allow_headers:
+    - "*"
+  request_id_header: "X-Request-ID"
+  correlation_id_header: "X-Correlation-ID"
+
+postgres:
+  pool_size: 20
+  max_overflow: 10
+  pool_timeout: 30
+  pool_recycle: 1800
+  pool_pre_ping: true
+  echo: false
+  echo_pool: false
+
+redis:
+  max_connections: 100
+  socket_timeout: 5
+  socket_connect_timeout: 5
+  retry_on_timeout: true
+  health_check_interval: 30
+  encoding: "utf-8"
+  decode_responses: true
+
+qdrant:
+  prefer_grpc: true
+  timeout: 30
+  grpc_port: 6334
+  https: false
+
+neo4j:
+  max_connection_pool_size: 50
+  connection_timeout: 30
+  connection_acquisition_timeout: 60
+  max_transaction_retry_time: 30
+  initial_retry_delay: 1.0
+  retry_delay_multiplier: 2.0
+  retry_delay_jitter_factor: 0.2
+  max_retry_delay: 60.0
+
+scraping:
+  request_timeout: 30
+  max_retries: 3
+  retry_min_wait: 1
+  retry_max_wait: 10
+  cache_ttl: 3600
+  rate_limit_rps: 5
+  circuit_breaker_failure_threshold: 5
+  circuit_breaker_recovery_timeout: 60
+  max_content_length_bytes: 5_000_000
+  chunk_size: 2000
+  chunk_overlap: 200
+  allowed_domains: []           # empty means all domains are allowed
+
+agent:
+  max_token_budget: 100_000
+  max_cost_usd: 10.0
+  max_recursion_depth: 25
+  execution_timeout_seconds: 600
+  heartbeat_interval_seconds: 30
+  checkpointing_enabled: true
+  human_approval_timeout_seconds: 3600
+
+knowledge_graph:
+  embedding_dimension: 3072
+  similarity_threshold: 0.85
+  community_resolution: 1.0
+  max_hops: 3
+  confidence_threshold: 0.7
+  deduplication_threshold: 0.95
+
+observability:
+  enabled: true
+  service_name: searchops
+  traces_enabled: true
+  metrics_enabled: true
+  logs_enabled: true
+  propagation: tracecontext,baggage
+  sample_rate: 1.0
+  langfuse_enabled: true
+
+security:
+  jwt_algorithm: "HS256"
+  access_token_expire_minutes: 60
+  refresh_token_expire_days: 30
+  bcrypt_rounds: 12
+  rate_limit_requests_per_minute: 60
+  rate_limit_burst: 10
+  max_upload_size_bytes: 10_000_000
+  allowed_hosts:
+    - "localhost"
+    - "127.0.0.1"
+  csrf_enabled: true
+  prompt_injection_detection_enabled: true
+  output_validation_enabled: true
+
+llm:
+  default_provider: openai
+  default_temperature: 0.0
+  default_max_tokens: 8192
+  request_timeout: 120
+  max_retries: 3
+
+search:
+  default_provider: tavily
+  max_results_per_query: 10
+  search_timeout: 30
+  cache_ttl: 900          # 15 minutes
+
+memory:
+  execution:
+    backend: redis
+    default_ttl: 86400    # 24 hours
+    max_size_bytes: 104857600   # 100MB
+  workflow:
+    backend: postgres
+    retention_days: 90
+  vector:
+    backend: qdrant
+    collection_name: searchops_vectors
+    distance_metric: cosine
+  knowledge:
+    backend: neo4j
+    database: searchops
