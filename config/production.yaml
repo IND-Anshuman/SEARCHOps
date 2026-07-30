@@ -1,0 +1,37 @@
+# ─────────────────────────────────────────────────────────────────────────────
+#  Production environment overrides
+# ─────────────────────────────────────────────────────────────────────────────
+
+app:
+  debug: false
+  log_level: INFO
+  log_format: json
+
+api:
+  reload: false
+  workers: 4
+  docs_url: null          # Disable Swagger UI in production
+  redoc_url: null
+
+postgres:
+  pool_size: 50
+  max_overflow: 20
+  echo: false
+
+redis:
+  max_connections: 200
+
+observability:
+  sample_rate: 0.1        # Sample 10% of traces in production for cost control
+  langfuse_enabled: true
+
+agent:
+  max_cost_usd: 50.0
+  execution_timeout_seconds: 600
+  max_recursion_depth: 25
+
+security:
+  rate_limit_requests_per_minute: 60
+  csrf_enabled: true
+  prompt_injection_detection_enabled: true
+  output_validation_enabled: true
