@@ -1,0 +1,116 @@
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+*.egg
+*.egg-info/
+dist/
+build/
+eggs/
+parts/
+var/
+sdist/
+wheels/
+pip-wheel-metadata/
+share/python-wheels/
+*.manifest
+*.spec
+MANIFEST
+
+# Virtual environments
+.venv/
+venv/
+ENV/
+env/
+.env.local
+.env.development
+.env.production
+.env.staging
+.env.test
+
+# Secrets — NEVER commit these
+.env
+secrets/
+*.pem
+*.key
+*.crt
+*.p12
+*.jks
+*.keystore
+
+# Testing
+.pytest_cache/
+.coverage
+coverage.xml
+htmlcov/
+.tox/
+.nox/
+nosetests.xml
+*.cover
+*.log
+
+# Type checking
+.mypy_cache/
+.pytype/
+.pyre/
+pyrightconfig.json
+
+# IDEs
+.idea/
+.vscode/settings.json
+*.swp
+*.swo
+*~
+.DS_Store
+Thumbs.db
+
+# Distribution / packaging
+*.whl
+*.tar.gz
+
+# uv
+.uv/
+
+# Node (for frontend tooling if added later)
+node_modules/
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+
+# Docker build artifacts
+.dockerignore.generated
+
+# Kubernetes secrets
+k8s/secrets/
+
+# Generated docs
+docs/_build/
+docs/api/
+
+# Data directories (may contain PII/proprietary data)
+data/
+uploads/
+downloads/
+outputs/
+reports/generated/
+
+# Monitoring
+grafana/data/
+prometheus/data/
+
+# Database migrations (keep alembic.ini but not local SQLite)
+*.db
+*.sqlite
+
+# Playwright browsers
+playwright/.local-chromium/
+
+# Langfuse
+.langfuse/
+
+# OpenTelemetry collector
+otelcol/
+
+# Performance profiling
+*.prof
