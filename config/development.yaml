@@ -1,0 +1,27 @@
+# ─────────────────────────────────────────────────────────────────────────────
+#  Development environment overrides
+# ─────────────────────────────────────────────────────────────────────────────
+
+app:
+  debug: true
+  log_level: DEBUG
+  log_format: console     # human-readable in dev
+
+api:
+  reload: true
+  workers: 1
+
+postgres:
+  echo: true              # Log SQL queries in dev
+
+observability:
+  sample_rate: 1.0        # Trace everything in dev
+  langfuse_enabled: true
+
+agent:
+  max_cost_usd: 1.0       # Low budget ceiling in dev to avoid runaway costs
+  execution_timeout_seconds: 120
+
+security:
+  rate_limit_requests_per_minute: 1000   # Higher limit for local dev
+  csrf_enabled: false
