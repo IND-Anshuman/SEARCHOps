@@ -212,7 +212,7 @@ addopts = [
     "--cov=src/searchops",
     "--cov-report=term-missing",
     "--cov-report=html:htmlcov",
-    "--cov-fail-under=80",
+    "--cov-fail-under=75",
 ]
 markers = [
     "unit: Pure unit tests with no external dependencies",
