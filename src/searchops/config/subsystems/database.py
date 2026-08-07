@@ -13,7 +13,7 @@ class DatabaseSettings(BaseSettings):
     port: int = 5432
     name: str = Field(default="searchops", alias="POSTGRES_DB")
     user: str = Field(default="searchops", alias="POSTGRES_USER")
-    password: SecretStr = Field(alias="POSTGRES_PASSWORD")
+    password: SecretStr = Field(default=SecretStr("searchops_dev_pass"), alias="POSTGRES_PASSWORD")
     pool_size: int = 20
     max_overflow: int = 10
     pool_timeout: float = 30.0
@@ -23,7 +23,7 @@ class DatabaseSettings(BaseSettings):
     echo_pool: bool = False
     ssl_mode: str = "prefer"
 
-    model_config = SettingsConfigDict(env_prefix="POSTGRES_", frozen=True, populate_by_name=True)
+    model_config = SettingsConfigDict(env_prefix="POSTGRES_", env_file=".env", extra="ignore", frozen=True, populate_by_name=True)
 
     @field_validator("pool_size")
     @classmethod
