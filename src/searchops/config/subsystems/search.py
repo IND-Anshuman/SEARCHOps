@@ -18,15 +18,17 @@ class SearchSettings(BaseSettings):
     max_results_per_query: int = 10
     search_timeout: int = 30
     cache_ttl: int = 900
-    arxiv_max_results: int = 20
+    searxng_base_url: str = Field(default="http://localhost:8080", alias="SEARXNG_BASE_URL")
+    searxng_verify_ssl: bool = Field(default=True, alias="SEARXNG_VERIFY_SSL")
+    playwright_search_engine: str = Field(default="duckduckgo", alias="PLAYWRIGHT_SEARCH_ENGINE")
 
     model_config = SettingsConfigDict(frozen=True, populate_by_name=True)
 
     @field_validator("default_provider")
     @classmethod
     def validate_default_provider(cls, v: str) -> str:
-        if v not in {"tavily", "serper", "brave", "bing"}:
-            raise ValueError("default_provider must be one of: tavily, serper, brave, bing")
+        if v not in {"tavily", "serper", "brave", "bing", "searxng", "playwright"}:
+            raise ValueError("default_provider must be one of: tavily, serper, brave, bing, searxng, playwright")
         return v
 
     @field_validator("max_results_per_query")
