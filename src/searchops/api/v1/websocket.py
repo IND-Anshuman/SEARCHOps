@@ -27,15 +27,19 @@ async def research_progress_ws(
 
     service = ResearchApplicationService()  # DI container wires this in production
 
+    import asyncio
+
     try:
         async for update in service.stream_progress(job_id):
             await websocket.send_text(json.dumps(update))
             if update.get("status") in ("completed", "failed"):
                 break
-    except WebSocketDisconnect:
-        log.info("WebSocket client disconnected", job_id=job_id)
+        await websocket.close()
+    except (WebSocketDisconnect, RuntimeError, asyncio.CancelledError):
+        log.info("WebSocket connection closed", job_id=job_id)
     except Exception as exc:
         log.error("WebSocket error", job_id=job_id, error=str(exc))
-        await websocket.send_text(json.dumps({"error": str(exc)}))
-    finally:
-        await websocket.close()
+        try:
+            await websocket.close()
+        except Exception:
+            pass
