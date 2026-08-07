@@ -8,20 +8,24 @@ from typing import Any
 import structlog
 from pydantic import BaseModel, Field
 
+from searchops.core.context.delta_compressor import ContextDeltaCompressor, CompressedContextDelta
 from searchops.core.interfaces.storage import IGraphStore, IVectorStore
 from searchops.knowledge.domain.entity import KGEntity, KGRelation
+from searchops.llm.tokenizer import count_tokens
 
 log = structlog.get_logger(__name__)
 
 
 class AssembledContext(BaseModel):
     """Container holding assembled domain context for prompt compilation."""
+
     query: str
     graph_entities: list[dict[str, Any]] = Field(default_factory=list)
     graph_relations: list[dict[str, Any]] = Field(default_factory=list)
     vector_excerpts: list[dict[str, Any]] = Field(default_factory=list)
     citations: list[str] = Field(default_factory=list)
     total_estimated_tokens: int = 0
+    delta: CompressedContextDelta | None = None
 
 
 class ContextAssemblyService:
@@ -31,9 +35,11 @@ class ContextAssemblyService:
         self,
         vector_store: IVectorStore | None = None,
         graph_store: IGraphStore | None = None,
+        delta_compressor: ContextDeltaCompressor | None = None,
     ) -> None:
         self.vector_store = vector_store
         self.graph_store = graph_store
+        self.delta_compressor = delta_compressor or ContextDeltaCompressor()
 
     async def assemble_context(
         self,
@@ -50,18 +56,22 @@ class ContextAssemblyService:
             {
                 "url": doc.get("url", ""),
                 "title": doc.get("title", ""),
-                "content": doc.get("content", ""),
+                "content": doc.get("content_summary") or doc.get("content", ""),
+                "snippets": doc.get("snippets", []),
             }
             for doc in (scraped_docs or [])
         ]
         citations = [doc.get("url", "") for doc in (scraped_docs or []) if doc.get("url")]
 
-        log.info("Assembled domain context", query=query, entities=len(graph_entities), docs=len(vector_excerpts))
+        context_string = f"Query: {query}\nEntities: {graph_entities}\nDocs: {vector_excerpts}"
+        total_tokens = count_tokens(context_string, "gpt-4o")
+
+        log.info("Assembled domain context", query=query, entities=len(graph_entities), docs=len(vector_excerpts), total_tokens=total_tokens)
 
         return AssembledContext(
             query=query,
             graph_entities=graph_entities,
             vector_excerpts=vector_excerpts,
             citations=citations,
-            total_estimated_tokens=len(query.split()) * 2,
+            total_estimated_tokens=total_tokens,
         )
