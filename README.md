@@ -46,11 +46,33 @@ uv sync
 cp .env.example .env
 # Edit .env with your credentials
 
-# 5. Run bootstrap check
-uv run python scripts/check_env.py
-
 # 6. Run tests
 uv run pytest tests/unit -m unit
+
+## Running without Docker (Offline Mode)
+
+You can run the entire test suite and development servers completely database-free/without Docker running by configuring lightweight local/mock fallbacks in your `.env` file:
+
+1. **Local In-Memory Qdrant**: Set Qdrant host to use memory mode:
+   ```env
+   QDRANT_HOST=:memory:
+   ```
+2. **Mock Neo4j Graph Database**: Set Neo4j URI to bypass network handshakes:
+   ```env
+   NEO4J_URI=mock
+   ```
+3. **Disable Telemetry Trace Exports**: Silence OTel connection refused warnings:
+   ```env
+   OTEL_TRACES_EXPORTER=none
+   ```
+
+Then, execute testing without any active Docker containers:
+```bash
+# Run unit tests
+uv run pytest tests/unit/ --no-cov
+
+# Run Playwright E2E browser tests
+uv run pytest tests/test_e2e_console.py --no-cov
 ```
 
 ## Development
