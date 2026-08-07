@@ -228,6 +228,27 @@ CIRCUIT_BREAKER_STATE = Gauge(
 
 # ── System information ────────────────────────────────────────────────────────
 
+# ── Token economy & context engineering metrics ───────────────────────────────
+
+STATE_TOKENS_COMPACTED_TOTAL = Counter(
+    name="searchops_state_tokens_compacted_total",
+    documentation="Total state compaction events executed",
+    registry=_REGISTRY,
+)
+
+STATE_TOKENS_SAVED_BYTES_TOTAL = Counter(
+    name="searchops_state_tokens_saved_bytes_total",
+    documentation="Total bytes pruned from state memory",
+    registry=_REGISTRY,
+)
+
+CONTEXT_DELTA_COMPRESSION_RATIO = Histogram(
+    name="searchops_context_delta_compression_ratio",
+    documentation="Context window delta compression ratio (1.0 - delta/full)",
+    buckets=(0.1, 0.25, 0.5, 0.65, 0.75, 0.85, 0.9, 0.95),
+    registry=_REGISTRY,
+)
+
 SERVICE_INFO = Info(
     name="searchops_service",
     documentation="SEARCHOps service information",
