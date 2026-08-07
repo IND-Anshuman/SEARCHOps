@@ -95,6 +95,32 @@ pip install -e .[dev]
 .venv\Scripts\pytest
 ```
 
+### 4.2 Running without Docker (Offline Mode)
+
+For development and testing environments, you can run SEARCHOps entirely without Docker by configuring lightweight in-memory and mock drivers in your `.env` file:
+
+1. **Local In-Memory Qdrant**: Set Qdrant host to use memory mode:
+   ```env
+   QDRANT_HOST=:memory:
+   ```
+2. **Mock Neo4j Graph Database**: Set Neo4j URI to bypass network handshakes:
+   ```env
+   NEO4J_URI=mock
+   ```
+3. **Disable Telemetry Trace Exports**: Silence OTel connection refused warnings:
+   ```env
+   OTEL_TRACES_EXPORTER=none
+   ```
+
+Then, run pytest without any active Docker container:
+```bash
+# Run unit tests
+uv run pytest tests/unit/ --no-cov
+
+# Run Playwright E2E browser tests
+uv run pytest tests/test_e2e_console.py --no-cov
+```
+
 ---
 
 ## 5. Operational Command Reference Cheat Sheet
