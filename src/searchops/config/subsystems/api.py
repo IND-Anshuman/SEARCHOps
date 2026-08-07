@@ -28,6 +28,19 @@ class APISettings(BaseSettings):
 
     model_config = SettingsConfigDict(env_prefix="API_", frozen=True)
 
+    @field_validator("allowed_origins", mode="before")
+    @classmethod
+    def validate_allowed_origins(cls, v: Any) -> list[str]:
+        if isinstance(v, str):
+            if v.startswith("[") and v.endswith("]"):
+                import json
+                try:
+                    return json.loads(v)
+                except Exception:
+                    pass
+            return [x.strip() for x in v.split(",") if x.strip()]
+        return v
+
     @field_validator("port")
     @classmethod
     def validate_port(cls, v: int) -> int:
