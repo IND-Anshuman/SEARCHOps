@@ -11,7 +11,7 @@ class KnowledgeGraphSettings(BaseSettings):
 
     neo4j_uri: str = Field(default="bolt://localhost:7687", alias="NEO4J_URI")
     neo4j_user: str = Field(default="neo4j", alias="NEO4J_USER")
-    neo4j_password: SecretStr = Field(alias="NEO4J_PASSWORD")
+    neo4j_password: SecretStr = Field(default=SecretStr("searchops_dev_pass"), alias="NEO4J_PASSWORD")
     neo4j_database: str = Field(default="searchops", alias="NEO4J_DATABASE")
     neo4j_max_connection_pool_size: int = 50
     embedding_dimension: int = 3072
@@ -21,7 +21,7 @@ class KnowledgeGraphSettings(BaseSettings):
     confidence_threshold: float = 0.7
     deduplication_threshold: float = 0.95
 
-    model_config = SettingsConfigDict(frozen=True, populate_by_name=True)
+    model_config = SettingsConfigDict(env_file=".env", extra="ignore", frozen=True, populate_by_name=True)
 
     @field_validator("similarity_threshold", "confidence_threshold", "deduplication_threshold")
     @classmethod
