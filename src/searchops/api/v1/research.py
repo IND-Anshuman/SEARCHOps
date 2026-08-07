@@ -10,6 +10,7 @@ Routes:
 from __future__ import annotations
 
 import structlog
+from typing import Any
 from fastapi import APIRouter, Depends, HTTPException, status
 from pydantic import BaseModel, Field
 
@@ -46,6 +47,54 @@ class JobStatusResponse(BaseModel):
     error: str | None = None
     created_at: str | None = None
     completed_at: str | None = None
+
+
+class KGNodeSchema(BaseModel):
+    id: str
+    canonicalId: str
+    name: str
+    type: str
+    summary: str
+
+
+class KGEdgeSchema(BaseModel):
+    id: str
+    source: str
+    target: str
+    relation_type: str
+    description: str
+
+
+class KnowledgeGraphResponse(BaseModel):
+    nodes: list[KGNodeSchema] = []
+    edges: list[KGEdgeSchema] = []
+
+
+class VectorChunkSchema(BaseModel):
+    id: str
+    documentTitle: str
+    sourceUrl: str
+    similarityScore: float
+    tokenCount: int
+    chunkPreview: str
+
+
+class VectorChunksResponse(BaseModel):
+    chunks: list[VectorChunkSchema] = []
+
+
+class LogItemSchema(BaseModel):
+    id: str
+    stream: str
+    eventType: str
+    correlationId: str
+    timestamp: str
+    payload: dict[str, Any] = {}
+    level: str
+
+
+class LogsResponse(BaseModel):
+    logs: list[LogItemSchema] = []
 
 
 # ── Dependency helper (replaced by DI container in production) ────────────────
@@ -95,6 +144,115 @@ async def get_research_status(
             detail=f"Research job '{job_id}' not found.",
         )
     return JobStatusResponse(**data)
+
+
+@router.get(
+    "/{job_id}/graph",
+    response_model=KnowledgeGraphResponse,
+    summary="Get Knowledge Graph for research job",
+)
+async def get_research_graph(
+    job_id: str,
+    service: ResearchApplicationService = Depends(_get_service),
+) -> KnowledgeGraphResponse:
+    job_data = await service.get_job_status(job_id)
+    if job_data is None:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail=f"Research job '{job_id}' not found.",
+        )
+
+    # Check if graph exists in Neo4j via repository
+    # Fall back to Redis cached entities/relations if Neo4j is offline or empty
+    nodes: list[KGNodeSchema] = []
+    edges: list[KGEdgeSchema] = []
+
+    cached_entities = job_data.get("entities", [])
+    cached_relations = job_data.get("relations", [])
+
+    for e in cached_entities:
+        nodes.append(KGNodeSchema(
+            id=e.get("id", ""),
+            canonicalId=e.get("canonical_id", ""),
+            name=e.get("name", ""),
+            type=e.get("entity_type", "technology"),
+            summary=e.get("description", "")
+        ))
+
+    for idx, r in enumerate(cached_relations):
+        edges.append(KGEdgeSchema(
+            id=r.get("id") or f"edge_{idx}",
+            source=r.get("source_canonical_id") or r.get("source_id", ""),
+            target=r.get("target_canonical_id") or r.get("target_id", ""),
+            relation_type=r.get("relation_type", "RELATED_TO"),
+            description=r.get("description", "")
+        ))
+
+    return KnowledgeGraphResponse(nodes=nodes, edges=edges)
+
+
+@router.get(
+    "/{job_id}/chunks",
+    response_model=VectorChunksResponse,
+    summary="Get retrieved Vector Chunks for research job",
+)
+async def get_research_chunks(
+    job_id: str,
+    service: ResearchApplicationService = Depends(_get_service),
+) -> VectorChunksResponse:
+    job_data = await service.get_job_status(job_id)
+    if job_data is None:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail=f"Research job '{job_id}' not found.",
+        )
+
+    # Fall back to chunks stored in cache
+    chunks_data = job_data.get("chunks", [])
+    chunks = []
+    for c in chunks_data:
+        chunks.append(VectorChunkSchema(
+            id=c.get("id", ""),
+            documentTitle=c.get("documentTitle", ""),
+            sourceUrl=c.get("sourceUrl", ""),
+            similarityScore=c.get("similarityScore", 0.0),
+            tokenCount=c.get("tokenCount", 0),
+            chunkPreview=c.get("chunkPreview", "")
+        ))
+
+    return VectorChunksResponse(chunks=chunks)
+
+
+@router.get(
+    "/{job_id}/logs",
+    response_model=LogsResponse,
+    summary="Get logs / event logs for research job",
+)
+async def get_research_logs(
+    job_id: str,
+    service: ResearchApplicationService = Depends(_get_service),
+) -> LogsResponse:
+    job_data = await service.get_job_status(job_id)
+    if job_data is None:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail=f"Research job '{job_id}' not found.",
+        )
+
+    logs_data = job_data.get("logs", [])
+    logs = []
+    for l in logs_data:
+        logs.append(LogItemSchema(
+            id=l.get("id", ""),
+            stream=l.get("stream", ""),
+            eventType=l.get("eventType", ""),
+            correlationId=l.get("correlationId", ""),
+            timestamp=l.get("timestamp", ""),
+            payload=l.get("payload", {}),
+            level=l.get("level", "info")
+        ))
+
+    return LogsResponse(logs=logs)
 
 
 @router.delete(
