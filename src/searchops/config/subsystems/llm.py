@@ -69,7 +69,7 @@ class LLMSettings(BaseSettings):
     default_provider: str = "google"                   # Gemini free tier is most generous
     default_temperature: float = 0.0                   # deterministic = cache hits
     default_max_tokens: int = 1_024                    # was 8192; capped hard
-    max_prompt_chars: int = 6_000                      # chars fed to LLM per call
+    max_prompt_chars: int = 32_000                     # chars fed to LLM per call (was 6,000)
     request_timeout: float = 60.0                      # shorter timeout
     max_retries: int = 2                               # fewer retries = fewer tokens
 
