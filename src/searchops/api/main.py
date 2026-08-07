@@ -18,8 +18,18 @@ It does NOT know about:
 """
 from __future__ import annotations
 
+from pathlib import Path
 from typing import Callable
 import structlog
+from dotenv import load_dotenv
+
+# Auto-load .env file before anything initializes
+env_file = Path(__file__).resolve().parents[3] / ".env"
+if env_file.exists():
+    load_dotenv(dotenv_path=env_file)
+else:
+    load_dotenv()
+
 from fastapi import FastAPI, Request, Response
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import ORJSONResponse
@@ -96,6 +106,28 @@ def create_app() -> FastAPI:
 
     app.include_router(research_router, prefix="/api/v1")
     app.include_router(ws_router)
+
+    # ── Frontend static files ──────────────────────────────────────────
+    from fastapi.staticfiles import StaticFiles
+    
+    frontend_dist = None
+    current_path = Path(__file__).resolve()
+    for parent in [current_path] + list(current_path.parents):
+        candidate = parent / "frontend" / "dist"
+        if candidate.exists() and candidate.is_dir():
+            frontend_dist = candidate
+            break
+            
+    if not frontend_dist:
+        candidate = Path.cwd() / "frontend" / "dist"
+        if candidate.exists() and candidate.is_dir():
+            frontend_dist = candidate
+        
+    if frontend_dist:
+        app.mount("/", StaticFiles(directory=str(frontend_dist), html=True), name="frontend")
+        log.info("Frontend static assets mounted at root /", path=str(frontend_dist))
+    else:
+        log.warning("Frontend static assets directory not found")
     
     log.info(
         "FastAPI application configured",
@@ -107,9 +139,5 @@ def create_app() -> FastAPI:
 
 
 # Module-level app instance (used by uvicorn)
-try:
-    app = create_app()
-except Exception as exc:
-    log.warning("Module-level app creation deferred", error=str(exc))
-    app = None
+app = create_app()
 
