@@ -9,12 +9,12 @@ from pydantic import Field, field_validator, SecretStr
 class ObservabilitySettings(BaseSettings):
     """Observability configuration settings."""
 
-    enabled: bool = True
+    enabled: bool = Field(default=True, alias="OTEL_ENABLED")
     service_name: str = "searchops"
     service_version: str = "0.1.0"
     otlp_endpoint: str = Field(default="http://localhost:4317", alias="OTEL_EXPORTER_OTLP_ENDPOINT")
     otlp_protocol: str = "grpc"
-    traces_enabled: bool = True
+    traces_enabled: bool = Field(default=True, alias="OTEL_TRACES_ENABLED")
     metrics_enabled: bool = True
     logs_enabled: bool = True
     sample_rate: float = 1.0
