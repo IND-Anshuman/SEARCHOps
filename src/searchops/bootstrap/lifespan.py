@@ -33,11 +33,12 @@ async def create_lifespan(app: FastAPI) -> AsyncIterator[dict[str, object]]:
     """
     # ─── Startup ─────────────────────────────────────────────────────────────
     container = await startup()
-    
+    app.state.container = container
+
     log.info("FastAPI application ready")
-    
+
     # State is available via request.app.state in route handlers
     yield {"container": container}
-    
+
     # ─── Shutdown ────────────────────────────────────────────────────────────
     await shutdown()
