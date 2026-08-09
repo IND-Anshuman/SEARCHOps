@@ -13,24 +13,32 @@ log = structlog.get_logger(__name__)
 
 async def shutdown() -> None:
     """Execute the graceful shutdown sequence.
-    
+
     Closes all resources in reverse initialization order:
-    1. Stop accepting new work (handled by uvicorn)
-    2. Stop agent heartbeats
-    3. Drain event bus
-    4. Close database connections
-    5. Close Redis connections
-    6. Flush OTel spans
-    
-    Each step is wrapped in try/except so one failure doesn't
-    prevent other resources from being cleaned up.
+    1. Close Redis client connection pool
+    2. Flush OTel spans (must be last so all other steps are traced)
+
+    Each step is wrapped in try/except so one failure does not prevent
+    the remaining resources from being cleaned up.
     """
     log.info("Initiating graceful shutdown")
-    
-    # Flush OTel spans (must be last so other steps' spans are captured)
+
+    # Step 1: Close Redis (flushes pending pub/sub subscribers cleanly)
+    await _close_redis()
+
+    # Step 2: Flush OTel spans
     _flush_otel()
-    
+
     log.info("Graceful shutdown complete")
+
+
+async def _close_redis() -> None:
+    """Close the global Redis async client."""
+    try:
+        from searchops.infrastructure.cache.redis import close_redis
+        await close_redis()
+    except Exception as exc:
+        log.warning("Failed to close Redis connection", error=str(exc))
 
 
 def _flush_otel() -> None:
