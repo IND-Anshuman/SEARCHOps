@@ -10,11 +10,15 @@ from pydantic import BaseModel, Field
 
 
 class ScrapeMode(enum.StrEnum):
-    """Scraping strategy."""
-    FIRECRAWL = "firecrawl"    # Firecrawl managed API
-    PLAYWRIGHT = "playwright"   # Direct headless browser
-    HTTP = "http"              # Simple HTTP fetch (httpx)
-    AUTO = "auto"              # Let the service decide
+    """Scraping strategy — ordered from lightest to heaviest cost/latency."""
+
+    FIRECRAWL = "firecrawl"      # Managed Firecrawl API ($$$, ~3–5s)
+    PLAYWRIGHT = "playwright"     # Pooled headless browser (local, ~1.5s)
+    HTTP = "http"                # Plain httpx (local, ~500ms, last resort)
+    STEALTH_HTTP = "stealth_http" # curl_cffi BoringSSL JA4 bypass (local, ~150ms)
+    CRAWL4AI = "crawl4ai"        # Local async AI crawler with BM25 pruning (~800ms)
+    DOCLING_PDF = "docling_pdf"  # IBM Docling CPU layout transformer for PDFs
+    AUTO = "auto"                # Let the pipeline decide based on target URL
 
 
 class ScrapeRequest(BaseModel):
@@ -57,6 +61,11 @@ class ScrapeResult(BaseModel):
     was_cached: bool = False
     scrape_mode_used: ScrapeMode = ScrapeMode.HTTP
     duration_ms: float = 0.0
+    # Phase 4+: structured data extracted from tables / PDF documents
+    dataframes_json: list[dict[str, Any]] | None = Field(
+        default=None,
+        description="List of {headers, rows, shape} dicts extracted from HTML/PDF tables.",
+    )
     metadata: dict[str, Any] = Field(default_factory=dict)
 
 
