@@ -1,0 +1,51 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+@layer base {
+  :root {
+    color-scheme: dark;
+  }
+  
+  body {
+    background-color: #020617;
+    color: #f8fafc;
+    font-family: 'JetBrains Mono', monospace;
+  }
+}
+
+/* Custom Scrollbars for High Density IDE UI */
+::-webkit-scrollbar {
+  width: 6px;
+  height: 6px;
+}
+
+::-webkit-scrollbar-track {
+  background: #090d16;
+}
+
+::-webkit-scrollbar-thumb {
+  background: #1e293b;
+  border-radius: 2px;
+}
+
+::-webkit-scrollbar-thumb:hover {
+  background: #334155;
+}
+
+/* High Contrast Code & Terminal Syntax */
+.terminal-output {
+  font-family: 'JetBrains Mono', monospace;
+  line-height: 1.45;
+  letter-spacing: -0.01em;
+}
+
+/* Custom Pulsing Status Animations */
+@keyframes nodePulse {
+  0%, 100% { opacity: 1; transform: scale(1); }
+  50% { opacity: 0.65; transform: scale(0.98); }
+}
+
+.animate-node-pulse {
+  animation: nodePulse 2s cubic-bezier(0.4, 0, 0.6, 1) infinite;
+}
