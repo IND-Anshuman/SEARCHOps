@@ -114,3 +114,6 @@ otelcol/
 
 # Performance profiling
 *.prof
+
+# Frontend local environment secrets
+frontend/.env.local
