@@ -1,7 +1,9 @@
+import collections
 import time
 from enum import Enum
-import structlog
 from typing import Dict
+
+import structlog
 
 log = structlog.get_logger(__name__)
 
@@ -57,7 +59,8 @@ class SearchHealthMonitor:
 
     def __init__(self) -> None:
         self._circuit_breakers: Dict[str, CircuitBreaker] = {}
-        self._latencies: Dict[str, list[float]] = {}
+        # deque(maxlen=50) gives O(1) append+bounded-discard vs list.pop(0) O(N)
+        self._latencies: Dict[str, collections.deque[float]] = {}
         self._success_counts: Dict[str, int] = {}
         self._failure_counts: Dict[str, int] = {}
 
@@ -70,14 +73,11 @@ class SearchHealthMonitor:
     def record_query(self, provider_name: str, latency_ms: float, success: bool) -> None:
         """Record the performance of an executed query."""
         breaker = self.get_breaker(provider_name)
-        
-        # Append latency
+
+        # Append latency — deque auto-discards oldest entry at maxlen=50
         if provider_name not in self._latencies:
-            self._latencies[provider_name] = []
+            self._latencies[provider_name] = collections.deque(maxlen=50)
         self._latencies[provider_name].append(latency_ms)
-        # Keep last 50 queries latency metrics
-        if len(self._latencies[provider_name]) > 50:
-            self._latencies[provider_name].pop(0)
 
         if success:
             self._success_counts[provider_name] = self._success_counts.get(provider_name, 0) + 1
