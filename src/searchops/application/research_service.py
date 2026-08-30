@@ -2,21 +2,35 @@
 Research Application Service.
 
 Bridges the API layer to the LangGraph orchestration engine.
-Owns: job creation, status tracking (Redis), result persistence, streaming progress events.
-"""
 
+Responsibilities:
+  - Job creation (delegate persistence to JobStateManager)
+  - Async execution of the LangGraph research pipeline
+  - Real telemetry instrumentation (wall-clock node timing, token extraction)
+  - Faithful extraction of the LLM-generated report from the final graph state
+  - No state ownership — all persistence flows through JobStateManager
+
+Design invariants:
+  - This service has NO concept of Redis keys or pub/sub channels.
+    Those belong to JobStateManager.
+  - Token costs are derived from actual LLM response metadata,
+    not hardcoded constants.
+  - The final_report is the exact string returned by report_writer_node,
+    never a template string.
+"""
 from __future__ import annotations
 
 import asyncio
+import time
 import uuid
 from datetime import datetime, timezone
-from typing import Any, AsyncGenerator
+from typing import Any
 
 import structlog
 
+from searchops.application.job_state_manager import JobStateManager
 from searchops.core.context.execution import ExecutionContext
 from searchops.core.context.research import ResearchDepth
-from searchops.core.exceptions.infrastructure import CacheError
 from searchops.infrastructure.cache.redis import RedisCache
 from searchops.knowledge.extractor import EntityExtractor
 from searchops.llm.router import LLMRouter
@@ -27,8 +41,6 @@ from searchops.search.aggregator import FederatedSearchAggregator
 
 log = structlog.get_logger(__name__)
 
-_JOB_TTL = 3600  # 1 hour
-
 
 class ResearchJobStatus:
     PENDING = "pending"
@@ -37,12 +49,29 @@ class ResearchJobStatus:
     FAILED = "failed"
 
 
+# Graph topology declaration — used to pre-populate node metadata
+_TOPOLOGY = [
+    ("planner",           "Planner Agent (Decomposition)",      "planner",   "system_planner_v4.2.jinja2"),
+    ("search",            "Web Searcher (Serper/Tavily)",        "search",    "system_searcher_v3.1.jinja2"),
+    ("ranker",            "Result Ranker",                       "extract",   "system_ranker_v1.0.jinja2"),
+    ("scrape",            "Deep Scraper (Firecrawl Engine)",     "scrape",    "system_scraper_v2.8.jinja2"),
+    ("evaluator",         "Fact Verifier (Reflection)",          "verify",    "system_verifier_v1.4.jinja2"),
+    ("extract_knowledge", "GraphRAG Extractor (Neo4j)",          "graph_rag", "system_graphrag_v5.0.jinja2"),
+    ("state_pruner",      "Context State Pruner",                "extract",   "system_state_pruner_v1.0.jinja2"),
+    ("report_writer",     "Report Synthesis Writer",             "report",    "system_report_writer_v4.2.jinja2"),
+]
+
+
 class ResearchApplicationService:
-    """Orchestrates the full research lifecycle via LangGraph."""
+    """Orchestrates the full research lifecycle via LangGraph.
+
+    Constructed once by ApplicationContainer and shared across all requests.
+    """
 
     def __init__(
         self,
-        cache: RedisCache | None = None,
+        cache: RedisCache,
+        job_state_manager: JobStateManager,
         llm_router: LLMRouter | None = None,
         aggregator: FederatedSearchAggregator | None = None,
         scraping_pipeline: ScrapingPipeline | None = None,
@@ -50,6 +79,7 @@ class ResearchApplicationService:
         arq_pool: Any | None = None,
     ) -> None:
         self.cache = cache
+        self.job_state_manager = job_state_manager
         self.llm_router = llm_router or LLMRouter(cache=cache)
         self.aggregator = aggregator or FederatedSearchAggregator()
         self.scraping_pipeline = scraping_pipeline or ScrapingPipeline(cache=cache)
@@ -64,14 +94,7 @@ class ResearchApplicationService:
             extractor=self.extractor,
         )
 
-    async def _set_status(self, job_id: str, status: dict[str, Any]) -> None:
-        if self.cache:
-            await self.cache.set(f"research:job:{job_id}", status, ttl_seconds=_JOB_TTL)
-
-    async def _get_status(self, job_id: str) -> dict[str, Any] | None:
-        if self.cache:
-            return await self.cache.get(f"research:job:{job_id}")
-        return None
+    # ── Public API ────────────────────────────────────────────────────────────
 
     async def start_research(
         self,
@@ -84,7 +107,7 @@ class ResearchApplicationService:
         job_id = str(uuid.uuid4())
         exec_ctx = context or ExecutionContext.create()
 
-        initial_status: dict[str, Any] = {
+        initial_state: dict[str, Any] = {
             "job_id": job_id,
             "status": ResearchJobStatus.PENDING,
             "query": query,
@@ -93,22 +116,48 @@ class ResearchApplicationService:
             "correlation_id": exec_ctx.correlation_id,
             "created_at": datetime.now(timezone.utc).isoformat(),
             "progress": 0,
+            "nodes": _build_initial_nodes(),
+            "logs": [],
+            "entities": [],
+            "relations": [],
+            "chunks": [],
+            "citations": [],
+            "token_used": 0,
+            "token_budget": 150000,
+            "cost_current": 0.0,
+            "cost_budget": 5.0,
         }
-        await self._set_status(job_id, initial_status)
 
-        # Enqueue job to Redis ARQ worker pool if available, otherwise inline fallback
+        await self.job_state_manager.create_job(job_id, initial_state)
+
         if self.arq_pool:
             try:
-                await self.arq_pool.enqueue_job("background_research_job", job_id, query, depth, max_sources)
-                log.info("Research job enqueued to ARQ Redis worker pool", job_id=job_id)
+                await self.arq_pool.enqueue_job(
+                    "background_research_job", job_id, query, depth, max_sources
+                )
+                log.info("Research job enqueued to ARQ pool", job_id=job_id)
             except Exception as exc:
-                log.warning("Failed to enqueue to ARQ pool, using inline task fallback", error=str(exc))
-                asyncio.create_task(self._execute_research(job_id, query, depth, max_sources, exec_ctx))
+                log.warning(
+                    "ARQ enqueue failed; using inline async task",
+                    job_id=job_id,
+                    error=str(exc),
+                )
+                asyncio.create_task(
+                    self._execute_research(job_id, query, depth, max_sources, exec_ctx)
+                )
         else:
-            asyncio.create_task(self._execute_research(job_id, query, depth, max_sources, exec_ctx))
+            asyncio.create_task(
+                self._execute_research(job_id, query, depth, max_sources, exec_ctx)
+            )
 
         log.info("Research job created", job_id=job_id, query=query)
         return job_id
+
+    async def get_job_status(self, job_id: str) -> dict[str, Any] | None:
+        """Retrieve job state from JobStateManager."""
+        return await self.job_state_manager.get_job(job_id)
+
+    # ── Internal pipeline execution ───────────────────────────────────────────
 
     async def _execute_research(
         self,
@@ -118,74 +167,59 @@ class ResearchApplicationService:
         max_sources: int,
         context: ExecutionContext,
     ) -> None:
-        """Internal method: run the LangGraph pipeline and persist the result."""
-        # Define graph nodes topology
-        topology = [
-            ("planner", "Planner Agent (Decomposition)", "planner", "system_planner_v4.2.jinja2"),
-            ("search", "Web Searcher (Serper/Tavily)", "search", "system_searcher_v3.1.jinja2"),
-            ("ranker", "Result Ranker", "extract", "system_ranker_v1.0.jinja2"),
-            ("scrape", "Deep Scraper (Firecrawl Engine)", "scrape", "system_scraper_v2.8.jinja2"),
-            ("evaluator", "Fact Verifier (Reflection)", "verify", "system_verifier_v1.4.jinja2"),
-            ("extract_knowledge", "GraphRAG Extractor (Neo4j)", "graph_rag", "system_graphrag_v5.0.jinja2"),
-            ("state_pruner", "Context State Pruner", "extract", "system_state_pruner_v1.0.jinja2"),
-            ("report_writer", "Report Synthesis Writer", "report", "system_report_writer_v4.2.jinja2"),
-        ]
-
-        nodes_map = {
+        """Run the LangGraph pipeline and persist state after every node."""
+        nodes_map: dict[str, dict[str, Any]] = {
             name: {
                 "id": name,
                 "label": label,
                 "type": ntype,
                 "status": "pending",
-                "latencyMs": 0,
-                "tokenCost": 0.0,
+                "latency_ms": 0,
+                "token_cost": 0.0,
                 "retries": 0,
                 "timestamp": datetime.now(timezone.utc).isoformat(),
                 "prompt": prompt_tmpl,
-                "inputPayload": {},
-                "outputPayload": {}
+                "input_payload": {},
+                "output_payload": {},
             }
-            for name, label, ntype, prompt_tmpl in topology
+            for name, label, ntype, prompt_tmpl in _TOPOLOGY
         }
 
-        logs = []
-        entities = []
-        relations = []
-        chunks = []
-        citations = []
+        logs: list[dict[str, Any]] = []
+        entities: list[dict[str, Any]] = []
+        relations: list[dict[str, Any]] = []
+        chunks: list[dict[str, Any]] = []
+        citations: list[str] = []
+        accumulated_token_used: int = 0
+        accumulated_cost: float = 0.0
 
-        def add_log(event_type: str, level: str, payload: dict[str, Any]):
-            log_id = f"evt_{int(datetime.now(timezone.utc).timestamp() * 1000)}"
+        def _add_log(event_type: str, level: str, payload: dict[str, Any]) -> None:
+            log_id = f"evt_{int(time.time() * 1000)}"
             logs.insert(0, {
                 "id": log_id,
                 "stream": "searchops:events:langgraph",
-                "eventType": event_type,
-                "correlationId": job_id,
+                "event_type": event_type,
+                "correlation_id": job_id,
                 "timestamp": datetime.now(timezone.utc).strftime("%H:%M:%S.%f")[:-3],
                 "payload": payload,
-                "level": level
+                "level": level,
             })
 
         try:
-            add_log("JOB_STARTED", "info", {"query": query, "depth": depth, "max_sources": max_sources})
+            _add_log("JOB_STARTED", "info", {
+                "query": query, "depth": depth, "max_sources": max_sources,
+            })
 
-            # Update initial pending status
-            await self._set_status(job_id, {
-                "job_id": job_id,
+            # Transition to RUNNING, mark planner as active
+            nodes_map["planner"]["status"] = "running"
+            nodes_map["planner"]["input_payload"] = {"query": query}
+
+            await self.job_state_manager.update_job(job_id, {
                 "status": ResearchJobStatus.RUNNING,
-                "query": query,
                 "progress": 5,
                 "nodes": list(nodes_map.values()),
                 "logs": logs,
-                "entities": entities,
-                "relations": relations,
-                "chunks": chunks,
-                "citations": citations,
-                "tokenUsed": 1000,
-                "tokenBudget": 100000,
-                "costCurrent": 0.02,
-                "costBudget": 1.50,
-                "startTime": datetime.now(timezone.utc).isoformat(),
+                "start_time": datetime.now(timezone.utc).isoformat(),
             })
 
             graph = self._build_graph()
@@ -197,151 +231,153 @@ class ResearchApplicationService:
                 "iteration": 0,
             }
 
-            # Set first node to running
-            nodes_map["planner"]["status"] = "running"
-            nodes_map["planner"]["inputPayload"] = {"query": query}
-            await self._set_status(job_id, {
-                "job_id": job_id,
-                "status": ResearchJobStatus.RUNNING,
-                "query": query,
-                "progress": 10,
-                "nodes": list(nodes_map.values()),
-                "logs": logs,
-                "entities": entities,
-                "relations": relations,
-                "chunks": chunks,
-                "citations": citations,
-                "tokenUsed": 4500,
-                "costCurrent": 0.09,
-            })
+            # Wall-clock timing per node
+            node_start_times: dict[str, float] = {}
+            final_report: str = ""
 
-            last_node = "planner"
-            
-            # Stream events inupdates mode
-            # astream returns chunks of updates from completed nodes
+            # Stream graph updates — each chunk is a dict of node_name → state_delta
             async for updates in graph.astream(initial_state, stream_mode="updates"):
-                # updates is a dict mapping node_name -> state_changes
                 for node_name, state_delta in updates.items():
-                    if node_name in nodes_map:
-                        nodes_map[node_name]["status"] = "completed"
-                        nodes_map[node_name]["latencyMs"] = 1200  # realistic backend processing
-                        nodes_map[node_name]["tokenCost"] = 0.12
-                        nodes_map[node_name]["outputPayload"] = {k: str(v)[:200] for k, v in state_delta.items() if k not in ("messages",)}
-                        
-                        add_log(f"NODE_{node_name.upper()}_COMPLETED", "info", {"node": node_name, "status": "success"})
+                    wall_clock_now = time.perf_counter()
 
-                        # Accumulate entities / relations
-                        if "entities" in state_delta and state_delta["entities"]:
-                            for ent in state_delta["entities"]:
-                                entities.append({
-                                    "id": ent.id,
-                                    "canonical_id": ent.canonical_id,
-                                    "name": ent.name,
-                                    "entity_type": ent.entity_type,
-                                    "description": ent.description,
-                                    "confidenceScore": ent.confidence
-                                })
-                        
-                        if "relations" in state_delta and state_delta["relations"]:
-                            for rel in state_delta["relations"]:
-                                relations.append({
-                                    "id": rel.id,
-                                    "source_id": rel.source_id,
-                                    "target_id": rel.target_id,
-                                    "source_canonical_id": rel.source_canonical_id,
-                                    "target_canonical_id": rel.target_canonical_id,
-                                    "relation_type": rel.relation_type,
-                                    "description": rel.description
-                                })
-                                
-                        if "search_results" in state_delta and state_delta["search_results"]:
-                            for item in state_delta["search_results"]:
-                                chunks.append({
-                                    "id": f"chunk_{len(chunks)}",
-                                    "documentTitle": item.title,
-                                    "sourceUrl": item.url,
-                                    "similarityScore": item.score or 0.85,
-                                    "tokenCount": 240,
-                                    "chunkPreview": item.snippet
-                                })
-                                citations.append(item.url)
+                    if node_name not in nodes_map:
+                        continue
 
-                    # Transition next pending node to running
-                    next_node = None
-                    for name, _, _, _ in topology:
-                        if nodes_map[name]["status"] == "pending":
-                            next_node = name
-                            break
-                    
+                    # Calculate real latency
+                    node_start = node_start_times.pop(node_name, wall_clock_now)
+                    latency_ms = int((wall_clock_now - node_start) * 1000)
+
+                    # Extract real token usage from LLM metadata if available
+                    node_tokens, node_cost = _extract_token_usage(state_delta)
+                    accumulated_token_used += node_tokens
+                    accumulated_cost += node_cost
+
+                    # Mark node complete with real measurements
+                    nodes_map[node_name].update({
+                        "status": "completed",
+                        "latency_ms": latency_ms,
+                        "token_cost": node_cost,
+                        "output_payload": {
+                            k: str(v)[:200]
+                            for k, v in state_delta.items()
+                            if k not in ("messages",)
+                        },
+                    })
+
+                    _add_log(
+                        f"NODE_{node_name.upper()}_COMPLETED",
+                        "info",
+                        {"node": node_name, "latency_ms": latency_ms, "tokens": node_tokens},
+                    )
+
+                    # Accumulate knowledge graph entities
+                    if state_delta.get("entities"):
+                        for ent in state_delta["entities"]:
+                            entities.append({
+                                "id": ent.id,
+                                "canonical_id": ent.canonical_id,
+                                "name": ent.name,
+                                "entity_type": ent.entity_type,
+                                "description": ent.description,
+                                "confidence_score": ent.confidence,
+                            })
+
+                    # Accumulate relations
+                    if state_delta.get("relations"):
+                        for rel in state_delta["relations"]:
+                            relations.append({
+                                "id": rel.id,
+                                "source_id": rel.source_id,
+                                "target_id": rel.target_id,
+                                "source_canonical_id": rel.source_canonical_id,
+                                "target_canonical_id": rel.target_canonical_id,
+                                "relation_type": rel.relation_type,
+                                "description": rel.description,
+                            })
+
+                    # Accumulate vector chunks from search results
+                    if state_delta.get("search_results"):
+                        for item in state_delta["search_results"]:
+                            chunks.append({
+                                "id": f"chunk_{len(chunks)}",
+                                "document_title": item.title,
+                                "source_url": item.url,
+                                "similarity_score": item.score or 0.85,
+                                "token_count": 240,
+                                "chunk_preview": item.snippet,
+                            })
+                            citations.append(item.url)
+
+                    # Capture the actual LLM-generated report (never a template)
+                    if node_name == "report_writer" and state_delta.get("final_report"):
+                        final_report = state_delta["final_report"]
+                        # Also pick up citations from the node's scraped sources
+                        if state_delta.get("citations"):
+                            citations.extend(state_delta["citations"])
+
+                    # Transition the next pending node to running
+                    next_node = _next_pending_node(nodes_map)
                     if next_node:
                         nodes_map[next_node]["status"] = "running"
-                        add_log(f"NODE_{next_node.upper()}_START", "info", {"node": next_node})
+                        node_start_times[next_node] = time.perf_counter()
+                        _add_log(
+                            f"NODE_{next_node.upper()}_START",
+                            "info",
+                            {"node": next_node},
+                        )
 
-                    completed_count = sum(1 for n in nodes_map.values() if n["status"] == "completed")
-                    progress_pct = int(10 + (completed_count / len(topology)) * 80)
+                    completed_count = sum(
+                        1 for n in nodes_map.values() if n["status"] == "completed"
+                    )
+                    progress_pct = int(10 + (completed_count / len(_TOPOLOGY)) * 80)
 
-                    # Update store status in cache
-                    await self._set_status(job_id, {
-                        "job_id": job_id,
+                    await self.job_state_manager.update_job(job_id, {
                         "status": ResearchJobStatus.RUNNING,
-                        "query": query,
                         "progress": progress_pct,
                         "nodes": list(nodes_map.values()),
                         "logs": logs,
                         "entities": entities,
                         "relations": relations,
                         "chunks": chunks,
-                        "citations": citations,
-                        "tokenUsed": 10000 + completed_count * 15000,
-                        "tokenBudget": 100000,
-                        "costCurrent": 0.20 + completed_count * 0.35,
-                        "costBudget": 1.50,
+                        "citations": list(dict.fromkeys(citations)),
+                        "token_used": accumulated_token_used,
+                        "cost_current": round(accumulated_cost, 6),
                     })
 
-            # Retrieve final state
-            final_report = ""
-            final_job_status = ResearchJobStatus.COMPLETED
-            
-            # Simple final state recovery
-            final_report = f"# Synthesized Research: {query}\n\nThis is a live synthesized report populated from Neo4j entities and retrieved vector sources.\n\n## Mined Entities\n"
-            for ent in entities[:10]:
-                final_report += f"- **{ent['name']}** ({ent['entity_type']}): {ent['description']}\n"
-            
-            final_report += "\n## Key Source Citations\n"
-            for cite in list(set(citations))[:5]:
-                final_report += f"- [{cite}]({cite})\n"
-
-            add_log("JOB_COMPLETED", "success", {"job_id": job_id, "entities_mined": len(entities), "sources_retrieved": len(citations)})
-
-            await self._set_status(job_id, {
+            # Publish terminal COMPLETED state
+            _add_log("JOB_COMPLETED", "success", {
                 "job_id": job_id,
-                "status": final_job_status,
-                "query": query,
+                "entities_mined": len(entities),
+                "sources_retrieved": len(citations),
+                "final_report_chars": len(final_report),
+            })
+
+            await self.job_state_manager.update_job(job_id, {
+                "status": ResearchJobStatus.COMPLETED,
                 "progress": 100,
-                "nodes": [ {**n, "status": "completed"} for n in nodes_map.values() ],
+                "nodes": [{**n, "status": "completed"} for n in nodes_map.values()],
                 "final_report": final_report,
-                "citations": list(set(citations)),
+                "citations": list(dict.fromkeys(citations)),
                 "entity_count": len(entities),
                 "source_count": len(chunks),
                 "entities": entities,
                 "relations": relations,
                 "chunks": chunks,
                 "logs": logs,
-                "tokenUsed": 128500,
-                "tokenBudget": 150000,
-                "costCurrent": 2.48,
-                "costBudget": 5.00,
+                "token_used": accumulated_token_used,
+                "token_budget": 150000,
+                "cost_current": round(accumulated_cost, 6),
+                "cost_budget": 5.0,
                 "completed_at": datetime.now(timezone.utc).isoformat(),
             })
+
             log.info("Research job completed", job_id=job_id)
 
         except Exception as exc:
             log.error("Research job failed", job_id=job_id, error=str(exc))
-            add_log("JOB_FAILED", "error", {"error": str(exc)})
-            await self._set_status(job_id, {
-                "job_id": job_id,
+            _add_log("JOB_FAILED", "error", {"error": str(exc)})
+            await self.job_state_manager.update_job(job_id, {
                 "status": ResearchJobStatus.FAILED,
-                "query": query,
                 "progress": 100,
                 "nodes": list(nodes_map.values()),
                 "error": str(exc),
@@ -349,20 +385,74 @@ class ResearchApplicationService:
                 "entities": entities,
                 "relations": relations,
                 "chunks": chunks,
-                "citations": citations,
+                "citations": list(dict.fromkeys(citations)),
+                "completed_at": datetime.now(timezone.utc).isoformat(),
             })
 
-    async def get_job_status(self, job_id: str) -> dict[str, Any] | None:
-        """Retrieve job status from cache."""
-        return await self._get_status(job_id)
 
-    async def stream_progress(self, job_id: str) -> AsyncGenerator[dict[str, Any], None]:
-        """Yield status updates for SSE/WebSocket streaming."""
-        max_polls = 120  # 2 minutes max
-        for _ in range(max_polls):
-            status = await self._get_status(job_id)
-            if status:
-                yield status
-                if status.get("status") in (ResearchJobStatus.COMPLETED, ResearchJobStatus.FAILED):
-                    break
-            await asyncio.sleep(1.0)
+# ── Helpers ────────────────────────────────────────────────────────────────────
+
+def _build_initial_nodes() -> list[dict[str, Any]]:
+    """Return the initial node list with all nodes in 'pending' status."""
+    return [
+        {
+            "id": name,
+            "label": label,
+            "type": ntype,
+            "status": "pending",
+            "latency_ms": 0,
+            "token_cost": 0.0,
+            "retries": 0,
+            "timestamp": datetime.now(timezone.utc).isoformat(),
+            "prompt": prompt_tmpl,
+            "input_payload": {},
+            "output_payload": {},
+        }
+        for name, label, ntype, prompt_tmpl in _TOPOLOGY
+    ]
+
+
+def _next_pending_node(nodes_map: dict[str, dict[str, Any]]) -> str | None:
+    """Return the id of the first pending node in topology order."""
+    for name, _, _, _ in _TOPOLOGY:
+        if nodes_map[name]["status"] == "pending":
+            return name
+    return None
+
+
+def _extract_token_usage(state_delta: dict[str, Any]) -> tuple[int, float]:
+    """Extract real token count and cost from LangGraph state delta.
+
+    LangGraph surfaces LLM response metadata in the 'messages' list.
+    Each AIMessage carries 'usage_metadata' (input/output tokens) and
+    'response_metadata' (model name). We aggregate across all messages
+    and calculate cost using the provider pricing table.
+
+    Returns:
+        (total_tokens: int, estimated_cost_usd: float)
+    """
+    from searchops.core.observability.cost_calculator import calculate_cost
+
+    messages = state_delta.get("messages", [])
+    total_cost = 0.0
+    total_tokens = 0
+
+    for msg in messages:
+        usage = getattr(msg, "usage_metadata", None)
+        if not usage:
+            continue
+
+        input_tokens: int = usage.get("input_tokens", 0)
+        output_tokens: int = usage.get("output_tokens", 0)
+        total_tokens += input_tokens + output_tokens
+
+        # Resolve model name from response metadata (provider-specific key)
+        response_meta = getattr(msg, "response_metadata", {}) or {}
+        model_name: str = (
+            response_meta.get("model_name")
+            or response_meta.get("model")
+            or "gemini-1.5-flash"  # conservative fallback
+        )
+        total_cost += calculate_cost(model_name, input_tokens, output_tokens)
+
+    return total_tokens, total_cost
