@@ -26,6 +26,7 @@ class SearchQuery(BaseSchema):
     exclude_domains: list[str] = Field(default_factory=list)
     required_capabilities: list[SearchCapability] = Field(default_factory=list)
     profile: SearchProfile = SearchProfile.FAST
+    raw_metadata: dict[str, Any] = Field(default_factory=dict)  # Extra per-query context (e.g. country, job_id)
 
 
 class ISearchProvider(ABC):
