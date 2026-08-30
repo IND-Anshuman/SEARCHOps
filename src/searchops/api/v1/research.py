@@ -2,16 +2,24 @@
 Research REST API Endpoints (v1).
 
 Routes:
-    POST   /api/v1/research/            Start a new research job
-    GET    /api/v1/research/{job_id}    Get job status + result
-    DELETE /api/v1/research/{job_id}    Cancel / forget a job (cache eviction)
+    POST   /api/v1/research/              Start a new research job
+    GET    /api/v1/research/{job_id}      Get job status + full result
+    DELETE /api/v1/research/{job_id}      Evict job from cache
+    GET    /api/v1/research/{job_id}/graph    Knowledge graph
+    GET    /api/v1/research/{job_id}/chunks   Vector chunks
+    GET    /api/v1/research/{job_id}/logs     Event logs
+
+All handlers resolve ResearchApplicationService from the shared DI
+container stored in request.app.state.container. No new service instances
+are ever created inside a request handler.
 """
 
 from __future__ import annotations
 
-import structlog
 from typing import Any
-from fastapi import APIRouter, Depends, HTTPException, status
+
+import structlog
+from fastapi import APIRouter, Depends, HTTPException, Request, status
 from pydantic import BaseModel, Field
 
 from searchops.application.research_service import ResearchApplicationService, ResearchJobStatus
@@ -21,10 +29,10 @@ log = structlog.get_logger(__name__)
 router = APIRouter(prefix="/research", tags=["research"])
 
 
-# ── Request / Response schemas ────────────────────────────────────────────────
+# ── Request / Response schemas ─────────────────────────────────────────────────
 
 class StartResearchRequest(BaseModel):
-    query: str = Field(..., min_length=3, max_length=2000, description="The research question")
+    query: str = Field(..., min_length=3, max_length=2000)
     depth: str = Field(default="standard", description="shallow | standard | deep")
     max_sources: int = Field(default=10, ge=1, le=50)
 
@@ -35,26 +43,66 @@ class StartResearchResponse(BaseModel):
     message: str
 
 
+class LangGraphNodeSchema(BaseModel):
+    """Mirrors the node dict written by ResearchApplicationService._execute_research."""
+    id: str
+    label: str
+    type: str
+    status: str
+    latency_ms: int = 0
+    token_cost: float = 0.0
+    retries: int = 0
+    timestamp: str = ""
+    prompt: str = ""
+    input_payload: dict[str, Any] = {}
+    output_payload: dict[str, Any] = {}
+
+
 class JobStatusResponse(BaseModel):
+    """Complete job state — every field stored in Redis is declared here.
+
+    FastAPI serializes only declared fields; undeclared fields are silently
+    stripped. This schema must stay in sync with the dict produced by
+    ResearchApplicationService._execute_research.
+    """
     job_id: str
     status: str
     query: str | None = None
+    depth: str = "standard"
     progress: int = 0
+    # Report
     final_report: str | None = None
     citations: list[str] = []
     entity_count: int = 0
     source_count: int = 0
+    # Telemetry (real measurements, never hardcoded)
+    token_used: int = 0
+    token_budget: int = 150000
+    cost_current: float = 0.0
+    cost_budget: float = 5.0
+    # Graph nodes topology
+    nodes: list[LangGraphNodeSchema] = []
+    # Error
     error: str | None = None
+    # Timestamps
     created_at: str | None = None
+    start_time: str | None = None
     completed_at: str | None = None
+
+    model_config = {"populate_by_name": True, "extra": "ignore"}
+
+
+from pydantic import AliasChoices, BaseModel, ConfigDict, Field
 
 
 class KGNodeSchema(BaseModel):
     id: str
-    canonicalId: str
+    canonicalId: str = Field(default="", validation_alias=AliasChoices("canonical_id", "canonicalId"), serialization_alias="canonicalId")
     name: str
     type: str
-    summary: str
+    summary: str = ""
+
+    model_config = ConfigDict(populate_by_name=True)
 
 
 class KGEdgeSchema(BaseModel):
@@ -62,7 +110,7 @@ class KGEdgeSchema(BaseModel):
     source: str
     target: str
     relation_type: str
-    description: str
+    description: str = ""
 
 
 class KnowledgeGraphResponse(BaseModel):
@@ -72,11 +120,13 @@ class KnowledgeGraphResponse(BaseModel):
 
 class VectorChunkSchema(BaseModel):
     id: str
-    documentTitle: str
-    sourceUrl: str
-    similarityScore: float
-    tokenCount: int
-    chunkPreview: str
+    documentTitle: str = Field(default="", validation_alias=AliasChoices("document_title", "documentTitle"), serialization_alias="documentTitle")
+    sourceUrl: str = Field(default="", validation_alias=AliasChoices("source_url", "sourceUrl"), serialization_alias="sourceUrl")
+    similarityScore: float = Field(default=0.0, validation_alias=AliasChoices("similarity_score", "similarityScore"), serialization_alias="similarityScore")
+    tokenCount: int = Field(default=0, validation_alias=AliasChoices("token_count", "tokenCount"), serialization_alias="tokenCount")
+    chunkPreview: str = Field(default="", validation_alias=AliasChoices("chunk_preview", "chunkPreview"), serialization_alias="chunkPreview")
+
+    model_config = ConfigDict(populate_by_name=True)
 
 
 class VectorChunksResponse(BaseModel):
@@ -85,32 +135,42 @@ class VectorChunksResponse(BaseModel):
 
 class LogItemSchema(BaseModel):
     id: str
-    stream: str
-    eventType: str
-    correlationId: str
-    timestamp: str
+    stream: str = ""
+    eventType: str = Field(default="", validation_alias=AliasChoices("event_type", "eventType"), serialization_alias="eventType")
+    correlationId: str = Field(default="", validation_alias=AliasChoices("correlation_id", "correlationId"), serialization_alias="correlationId")
+    timestamp: str = ""
     payload: dict[str, Any] = {}
-    level: str
+    level: str = "info"
+
+    model_config = ConfigDict(populate_by_name=True)
 
 
 class LogsResponse(BaseModel):
     logs: list[LogItemSchema] = []
 
 
-# ── Dependency helper (replaced by DI container in production) ────────────────
+# ── Dependency: resolve singleton service from container ───────────────────────
 
-def _get_service() -> ResearchApplicationService:
-    return ResearchApplicationService()
+def _get_service(request: Request) -> ResearchApplicationService:
+    """Resolve the shared ResearchApplicationService from the DI container.
+
+    The container is stored in app.state during startup. Fallback to
+    get_container() if app.state.container is not directly set.
+    """
+    from searchops.bootstrap.container import get_container
+    try:
+        return request.app.state.container.research_service
+    except AttributeError:
+        return get_container().research_service
 
 
-# ── Endpoints ─────────────────────────────────────────────────────────────────
+# ── Endpoints ──────────────────────────────────────────────────────────────────
 
 @router.post(
     "/",
     response_model=StartResearchResponse,
     status_code=status.HTTP_202_ACCEPTED,
     summary="Start an autonomous research job",
-    description="Submits a research query; returns a job_id for polling or streaming.",
 )
 async def start_research(
     payload: StartResearchRequest,
@@ -124,7 +184,7 @@ async def start_research(
     return StartResearchResponse(
         job_id=job_id,
         status=ResearchJobStatus.PENDING,
-        message="Research job submitted. Poll GET /research/{job_id} for results.",
+        message=f"Research job submitted. Connect to ws://.../ws/research/{job_id} for live updates.",
     )
 
 
@@ -143,7 +203,7 @@ async def get_research_status(
             status_code=status.HTTP_404_NOT_FOUND,
             detail=f"Research job '{job_id}' not found.",
         )
-    return JobStatusResponse(**data)
+    return JobStatusResponse.model_validate(data)
 
 
 @router.get(
@@ -162,30 +222,25 @@ async def get_research_graph(
             detail=f"Research job '{job_id}' not found.",
         )
 
-    # Check if graph exists in Neo4j via repository
-    # Fall back to Redis cached entities/relations if Neo4j is offline or empty
     nodes: list[KGNodeSchema] = []
     edges: list[KGEdgeSchema] = []
 
-    cached_entities = job_data.get("entities", [])
-    cached_relations = job_data.get("relations", [])
-
-    for e in cached_entities:
+    for e in job_data.get("entities", []):
         nodes.append(KGNodeSchema(
             id=e.get("id", ""),
-            canonicalId=e.get("canonical_id", ""),
+            canonical_id=e.get("canonical_id", ""),
             name=e.get("name", ""),
             type=e.get("entity_type", "technology"),
-            summary=e.get("description", "")
+            summary=e.get("description", ""),
         ))
 
-    for idx, r in enumerate(cached_relations):
+    for idx, r in enumerate(job_data.get("relations", [])):
         edges.append(KGEdgeSchema(
             id=r.get("id") or f"edge_{idx}",
             source=r.get("source_canonical_id") or r.get("source_id", ""),
             target=r.get("target_canonical_id") or r.get("target_id", ""),
             relation_type=r.get("relation_type", "RELATED_TO"),
-            description=r.get("description", "")
+            description=r.get("description", ""),
         ))
 
     return KnowledgeGraphResponse(nodes=nodes, edges=edges)
@@ -207,26 +262,17 @@ async def get_research_chunks(
             detail=f"Research job '{job_id}' not found.",
         )
 
-    # Fall back to chunks stored in cache
-    chunks_data = job_data.get("chunks", [])
-    chunks = []
-    for c in chunks_data:
-        chunks.append(VectorChunkSchema(
-            id=c.get("id", ""),
-            documentTitle=c.get("documentTitle", ""),
-            sourceUrl=c.get("sourceUrl", ""),
-            similarityScore=c.get("similarityScore", 0.0),
-            tokenCount=c.get("tokenCount", 0),
-            chunkPreview=c.get("chunkPreview", "")
-        ))
-
+    chunks = [
+        VectorChunkSchema.model_validate(c)
+        for c in job_data.get("chunks", [])
+    ]
     return VectorChunksResponse(chunks=chunks)
 
 
 @router.get(
     "/{job_id}/logs",
     response_model=LogsResponse,
-    summary="Get logs / event logs for research job",
+    summary="Get event logs for research job",
 )
 async def get_research_logs(
     job_id: str,
@@ -239,30 +285,20 @@ async def get_research_logs(
             detail=f"Research job '{job_id}' not found.",
         )
 
-    logs_data = job_data.get("logs", [])
-    logs = []
-    for l in logs_data:
-        logs.append(LogItemSchema(
-            id=l.get("id", ""),
-            stream=l.get("stream", ""),
-            eventType=l.get("eventType", ""),
-            correlationId=l.get("correlationId", ""),
-            timestamp=l.get("timestamp", ""),
-            payload=l.get("payload", {}),
-            level=l.get("level", "info")
-        ))
-
+    logs = [
+        LogItemSchema.model_validate(log_item)
+        for log_item in job_data.get("logs", [])
+    ]
     return LogsResponse(logs=logs)
 
 
 @router.delete(
     "/{job_id}",
     status_code=status.HTTP_204_NO_CONTENT,
-    summary="Delete a research job from cache",
+    summary="Evict a research job from cache",
 )
 async def delete_research_job(
     job_id: str,
     service: ResearchApplicationService = Depends(_get_service),
 ) -> None:
-    if service.cache:
-        await service.cache.delete(f"research:job:{job_id}")
+    await service.job_state_manager.delete_job(job_id)
