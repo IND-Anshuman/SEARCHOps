@@ -95,6 +95,9 @@ make test-integration
 
 # Format code
 make fmt
+
+# run server
+uv run uvicorn searchops.api.main:app --host 127.0.0.1 --port 8000
 ```
 
 ## Phase Completion Status
@@ -120,3 +123,4 @@ make fmt
 ## License
 
 Proprietary — All rights reserved.
+Analyze the runtime latency and memory overhead of DeepSeek-V3 vs Llama-3-405B in speculative decoding pipelines.
