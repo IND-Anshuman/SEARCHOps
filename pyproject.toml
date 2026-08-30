@@ -31,7 +31,7 @@ dependencies = [
     # ── Web Framework ──────────────────────────────────────────────────────
     "fastapi>=0.115.0",
     "uvicorn[standard]>=0.30.0",
-    "httpx>=0.27.0",
+    "httpx[http2]>=0.27.0",
     "python-multipart>=0.0.9",
     "sse-starlette>=2.1.0",
     # ── LLM Orchestration ─────────────────────────────────────────────────
@@ -93,6 +93,15 @@ dependencies = [
     "cachetools>=5.5.0",
     "langchain-google-genai>=4.3.2",
     "langchain-nvidia-ai-endpoints>=1.4.3",
+    "curl-cffi>=0.7.0",
+    "selectolax>=0.3.21",
+    "crawl4ai>=0.4.0",
+    "markdownify>=0.13.1",
+    "pymupdf>=1.24.0",
+    "duckdb>=1.1.0",
+    "docling>=2.0.0",
+    "datasketch>=1.6.0",
+    "outlines-core>=0.1.0",
 ]
 
 [project.optional-dependencies]
@@ -145,6 +154,7 @@ dev = [
     "pre-commit>=3.8.0",
     "aiosqlite>=0.20.0",
     "httpx2>=2.9.1",
+    "fakeredis>=2.37.0",
 ]
 
 # ── Ruff ──────────────────────────────────────────────────────────────────────
@@ -215,7 +225,13 @@ filterwarnings = [
     "error",
     "ignore::DeprecationWarning",
     "ignore::PendingDeprecationWarning",
+    # Windows Proactor event loop emits ResourceWarning during asyncio cleanup
+    # when curl_cffi / crawl4ai browser subprocess pipes are garbage-collected
+    # after the loop closes.  These are OS-level teardown artefacts, not code bugs.
+    "ignore::pytest.PytestUnraisableExceptionWarning",
+    "ignore::ResourceWarning",
 ]
+
 
 # ── coverage ──────────────────────────────────────────────────────────────────
 [tool.coverage.run]
