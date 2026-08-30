@@ -47,10 +47,19 @@ class SearchProviderRegistry:
         return [c[1] for c in candidates]
 
     def discover_plugins(self) -> None:
-        """Scan providers/ folder to dynamically load and register implementations."""
+        """Scan providers/ folder to dynamically load and register implementations.
+
+        Priority is read from each provider class's ``priority`` class attribute
+        (default 100). This eliminates the fragile name-string matching that was
+        previously used to assign priorities.
+
+        Provider classes should declare:
+            class MyProvider(ISearchProvider):
+                priority: int = 50  # Lower = tried first
+        """
         import searchops.search.providers as providers_pkg
         package_name = providers_pkg.__name__
-        
+
         for _, module_name, is_pkg in pkgutil.iter_modules(providers_pkg.__path__):
             if is_pkg:
                 continue
@@ -67,20 +76,21 @@ class SearchProviderRegistry:
                     ):
                         try:
                             provider_instance = attr()
-                            # Priority defaults: Tavily (10), Serper (20), SearXNG (50), Playwright (100)
-                            prio = 100
-                            if "tavily" in provider_instance.name.lower():
-                                prio = 10
-                            elif "serper" in provider_instance.name.lower():
-                                prio = 20
-                            elif "searxng" in provider_instance.name.lower():
-                                prio = 50
-                            
+                            # Read priority from class attribute; default 100
+                            prio = getattr(provider_instance, "priority", 100)
                             self.register(provider_instance, priority=prio, enabled=True)
                         except Exception as e:
-                            log.error("Failed to instantiate discovered search provider class", name=attr_name, error=str(e))
+                            log.error(
+                                "Failed to instantiate discovered search provider class",
+                                name=attr_name,
+                                error=str(e),
+                            )
             except Exception as e:
-                log.error("Failed to dynamically import search provider module", module=full_module_name, error=str(e))
+                log.error(
+                    "Failed to dynamically import search provider module",
+                    module=full_module_name,
+                    error=str(e),
+                )
 
 
 # Global singleton registry instance
