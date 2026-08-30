@@ -94,10 +94,20 @@ class SearchCache:
 
     async def get_semantic(self, query: str, providers_hash: str, threshold: float = 0.85) -> Optional[List[SearchResultItem]]:
         """Lookup cached queries via Jaccard token similarity for close matches (offline fallback)."""
-        # Scan recent search cache keys
+        # Use cursor-based SCAN instead of KEYS to avoid blocking Redis during full-keyspace scan.
+        # SCAN is O(N) but non-blocking — it yields small batches per call and resumes on next call.
         try:
             pattern = f"searchops:cache:search:*:{providers_hash}"
-            keys = await self.client.keys(pattern)
+            keys: list[bytes] = []
+            cursor: int = 0
+            while True:
+                cursor, batch = await self.client.scan(cursor, match=pattern, count=100)
+                keys.extend(batch)
+                if cursor == 0:
+                    break
+                # Safety cap: don't scan more than 500 keys in one semantic lookup
+                if len(keys) >= 500:
+                    break
             if not keys:
                 return None
 
