@@ -12,13 +12,15 @@ from pydantic import BaseModel, Field
 class ScrapeMode(enum.StrEnum):
     """Scraping strategy — ordered from lightest to heaviest cost/latency."""
 
-    FIRECRAWL = "firecrawl"      # Managed Firecrawl API ($$$, ~3–5s)
-    PLAYWRIGHT = "playwright"     # Pooled headless browser (local, ~1.5s)
-    HTTP = "http"                # Plain httpx (local, ~500ms, last resort)
-    STEALTH_HTTP = "stealth_http" # curl_cffi BoringSSL JA4 bypass (local, ~150ms)
-    CRAWL4AI = "crawl4ai"        # Local async AI crawler with BM25 pruning (~800ms)
-    DOCLING_PDF = "docling_pdf"  # IBM Docling CPU layout transformer for PDFs
-    AUTO = "auto"                # Let the pipeline decide based on target URL
+    FIRECRAWL    = "firecrawl"      # Managed Firecrawl API ($$$, ~3–5s)
+    PLAYWRIGHT   = "playwright"      # Pooled headless browser (local, ~1.5s)
+    HTTP         = "http"            # Plain httpx (local, ~500ms, last resort)
+    STEALTH_HTTP = "stealth_http"    # curl_cffi BoringSSL JA4 bypass (local, ~150ms)
+    CRAWL4AI     = "crawl4ai"        # Local async AI crawler with BM25 pruning (~800ms)
+    DOCLING_PDF  = "docling_pdf"     # IBM Docling CPU layout transformer for PDFs
+    BD_UNLOCKER  = "bd_unlocker"     # Bright Data Web Unlocker — CAPTCHA bypass (~1–2s) PREMIUM
+    BD_BROWSER   = "bd_browser"      # Bright Data Cloud Scraping Browser CDP (~3–6s) PREMIUM
+    AUTO         = "auto"            # Let the pipeline decide based on target URL
 
 
 class ScrapeRequest(BaseModel):
