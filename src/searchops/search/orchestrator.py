@@ -28,14 +28,20 @@ class SearchOrchestrator:
 
     async def search(self, query: SearchQuery, job_id: str = "") -> List[SearchResultItem]:
         """Orchestrates search queries across caching, policy rules, and provider cascades."""
+        from searchops.search.domain.models import SearchProfile
+
         # Resolve capabilities from profile
         required_caps = policy_engine.apply_profile(query)
-        
+
         # Get active candidates matching capabilities
         candidates = registry.resolve_by_capabilities(required_caps)
         if not candidates:
             # Fallback to all enabled providers if no subset matches exactly
             candidates = registry.list_providers()
+
+        # Routing is purely capability + priority based.
+        # Provider classes declare `priority: int` as a class attribute.
+        # No provider-name string matching here — open/closed principle.
 
         providers_hash = self._get_providers_hash(candidates)
 
@@ -108,6 +114,50 @@ class SearchOrchestrator:
             # Save original query context inside metadata of first result for Jaccard semantic cache key retrieval
             if fused:
                 fused[0].raw_metadata["original_query"] = query.query
+                # ── PAA sub-query passthrough (Premium Deep Search) ────────
+                # PAA subqueries are stored ONLY on fused[0] to avoid token
+                # duplication. Broadcasting to all items was duplicating the same
+                # list across N result items, inflating context by N×.
+                from searchops.search.domain.models import SearchProfile
+                if query.profile in (SearchProfile.PREMIUM, SearchProfile.DEEP):
+                    paa: list[str] = fused[0].raw_metadata.get("paa_subqueries", [])
+                    if paa:
+                        # Depth guard: prevent unbounded PAA expansion loops
+                        paa_depth = int(query.raw_metadata.get("paa_depth", 0)) if query.raw_metadata else 0
+                        max_paa_depth = get_settings().search.max_paa_depth
+                        max_paa_per_serp = get_settings().search.max_paa_per_serp
+                        if paa_depth >= max_paa_depth:
+                            log.warning(
+                                "PAA depth guard: max depth reached, suppressing PAA expansion",
+                                paa_depth=paa_depth,
+                                max_paa_depth=max_paa_depth,
+                                query=query.query,
+                            )
+                            from searchops.scraping.bd_metrics import BD_PAA_DEPTH_REJECTIONS
+                            BD_PAA_DEPTH_REJECTIONS.inc()
+                            # Clear PAA from fused[0] so callers don't enqueue sub-queries
+                            fused[0].raw_metadata.pop("paa_subqueries", None)
+                        else:
+                            # Deduplicate and truncate PAA subqueries
+                            seen: set[str] = set()
+                            deduped_paa: list[str] = []
+                            for q in paa:
+                                if q not in seen:
+                                    seen.add(q)
+                                    deduped_paa.append(q)
+                                    if len(deduped_paa) >= max_paa_per_serp:
+                                        break
+                            # Store deduplicated copy on fused[0] only
+                            fused[0].raw_metadata["paa_subqueries"] = deduped_paa
+                            from searchops.scraping.bd_metrics import BD_PAA_SUBQUERIES
+                            BD_PAA_SUBQUERIES.inc(len(deduped_paa))
+                            log.info(
+                                "PAA sub-queries stored on fused[0] (not broadcast)",
+                                count=len(deduped_paa),
+                                depth=paa_depth,
+                                query=query.query,
+                            )
+
                 ttl_sec = getattr(query, "cache_ttl", get_settings().search.cache_ttl)
                 await search_cache.set(query.query, providers_hash, fused, ttl_sec=ttl_sec)
 
