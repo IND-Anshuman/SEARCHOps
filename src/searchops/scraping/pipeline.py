@@ -42,6 +42,8 @@ from searchops.scraping.stealth import (
 )
 from searchops.scraping.document_engine import PdfScraper, build_pdf_scraper, is_pdf_url
 from searchops.scraping.transport import get_transport_pool
+from searchops.scraping.brightdata_unlocker import BrightDataUnlockerScraper, build_bd_unlocker
+from searchops.scraping.brightdata_browser import BrightDataBrowserScraper, build_bd_browser
 
 
 log = structlog.get_logger(__name__)
@@ -253,34 +255,29 @@ class PooledPlaywrightScraper(IScraper):
 
 class ScrapingPipeline:
     """
-    Multi-backend resilient scraping pipeline with Phase 1–3 enhancements.
+    Multi-backend resilient scraping pipeline with Free + Premium tiers.
 
     Tier execution order (lightest → heaviest cost/latency):
 
-    ┌──────┬──────────────────────────────────────┬──────────┬──────────┐
-    │ Tier │ Backend                              │ Latency  │ Cost     │
-    ├──────┼──────────────────────────────────────┼──────────┼──────────┤
-    │  0   │ StealthHTTPScraper (curl_cffi JA4)  │ ~150 ms  │ $0       │
-    │  0b  │ ProxyRouter (curl_cffi + DataImpulse│ ~400 ms  │ $1/GB    │
-    │  0.5 │ Crawl4AIScraper (BM25+entropy prune)│ ~800 ms  │ $0  NEW  │
-    │  1   │ PooledPlaywrightScraper              │ ~1.5 s   │ $0       │
-    │  2   │ FirecrawlScraper (if API key)        │ ~3–5 s   │ $$$      │
-    │  3   │ BasicHTTPScraper (last resort)       │ ~500 ms  │ $0       │
-    └──────┴──────────────────────────────────────┴──────────┴──────────┘
+    ┌──────┬──────────────────────────────────────┬──────────┬──────────────┬────────────┐
+    │ Prio │ Backend                              │ Latency  │ Cost         │ Class      │
+    ├──────┼──────────────────────────────────────┼──────────┼──────────────┼────────────┤
+    │  0   │ StealthHTTPScraper (curl_cffi JA4)   │ ~150 ms  │ $0           │ FREE       │
+    │  1   │ ProxyRouter (DataImpulse/Decodo)     │ ~400 ms  │ $1–2/GB      │ FREE       │
+    │  2   │ Crawl4AIScraper (BM25+entropy prune) │ ~800 ms  │ $0           │ FREE       │
+    │  3   │ PooledPlaywrightScraper              │ ~1.5 s   │ $0           │ FREE       │
+    │  4   │ BrightDataUnlockerScraper ★ PREMIUM  │ ~1–2 s   │ BD credits   │ PREMIUM    │
+    │  5   │ FirecrawlScraper                     │ ~3–5 s   │ $$$          │ FREE(paid) │
+    │  6   │ BrightDataBrowserScraper ★ PREMIUM   │ ~3–6 s   │ BD credits   │ PREMIUM    │
+    │  7   │ BasicHTTPScraper (last resort)       │ ~500 ms  │ $0           │ FREE       │
+    └──────┴──────────────────────────────────────┴──────────┴──────────────┴────────────┘
 
-    Features (Phase 1):
-    - BrowserPool for <100ms context reuse
-    - ContentPruner for 67% token reduction
-    - DomainRateLimiter with adaptive backoff
-    - NetworkInterceptor for XHR/Fetch/GraphQL capture
-
-    Features (Phase 2):
-    - StealthHTTPScraper: curl_cffi BoringSSL JA4 TLS impersonation
-    - ProxyRouter: residential proxy fallback (DataImpulse $1/GB)
-
-    Features (Phase 3):
-    - Crawl4AIScraper: local async AI crawler with BM25+entropy content pruning
-      producing token-optimised fit_markdown for LLM consumption
+    Premium tiers activate only when:
+      1. Bright Data credentials are configured (BRIGHTDATA_CUSTOMER_ID + BRIGHTDATA_ZONE_PASSWORD)
+      2. Feature flag is enabled (brightdata_unlocker_enabled / brightdata_browser_enabled)
+      3. Previous failure is ACCESS class (403/429/503) — NOT on 404 content failures
+      4. BD spend guard approves the cost (per-job/hour/day limits)
+      5. BD circuit breaker is CLOSED or HALF_OPEN
     """
 
     def __init__(
@@ -291,25 +288,60 @@ class ScrapingPipeline:
         pdf_scraper: PdfScraper | None = None,
         firecrawl: FirecrawlScraper | None = None,
         playwright: PooledPlaywrightScraper | None = None,
+        bd_unlocker: BrightDataUnlockerScraper | None = None,
+        bd_browser: BrightDataBrowserScraper | None = None,
         basic_http: BasicHTTPScraper | None = None,
         cache: RedisCache | None = None,
         rate_limiter: DomainRateLimiter | None = None,
         feature_flags: FeatureFlagManager | None = None,
+        spend_guard: "BrightDataSpendGuard | None" = None,
         settings: Settings | None = None,
     ) -> None:
+        from searchops.scraping.bd_spend_guard import BrightDataSpendGuard
+        from searchops.scraping.tier import ScrapeTier, FailureClass, TIER_DEFINITIONS, classify_failure as _clf
+
         _settings = settings or get_settings()
         self.stealth      = stealth      or build_stealth_scraper(_settings.scraping)
         self.proxy_router = proxy_router or build_proxy_router(_settings.scraping)
-        self.crawl4ai     = crawl4ai     or build_crawl4ai_scraper()  # Tier 0.5
-        self.pdf_scraper  = pdf_scraper  or build_pdf_scraper()       # PDF route
+        self.crawl4ai     = crawl4ai     or build_crawl4ai_scraper()  # Tier 2
+        self.pdf_scraper  = pdf_scraper  or build_pdf_scraper()
         self.firecrawl    = firecrawl    or FirecrawlScraper(settings)
         self.playwright   = playwright   or PooledPlaywrightScraper(settings=settings)
+        # Premium tiers — None if BD credentials not present
+        self.bd_unlocker  = bd_unlocker  if bd_unlocker is not None else build_bd_unlocker(_settings.scraping)
+        self.bd_browser   = bd_browser   if bd_browser  is not None else build_bd_browser(_settings.scraping)
         self.basic_http   = basic_http   or BasicHTTPScraper()
         self.cache        = cache
         self.rate_limiter = rate_limiter or get_rate_limiter()
         self.feature_flags = feature_flags
+        self.spend_guard  = spend_guard
         self.settings     = _settings.scraping
+        self._classify_failure = _clf
 
+        # Build declarative tier list — scrapers injected into ScrapeTier dataclasses
+        self._tiers: list[ScrapeTier] = self._build_tiers(TIER_DEFINITIONS)
+
+    def _build_tiers(self, definitions: list) -> list:
+        """Inject scraper instances into tier definitions and sort by priority."""
+        from searchops.scraping.tier import ScrapeTier
+        import copy
+
+        scraper_map = {
+            "stealth_http": self.stealth,
+            "proxy_router": self.proxy_router,
+            "crawl4ai": self.crawl4ai,
+            "playwright": self.playwright,
+            "bd_unlocker": self.bd_unlocker,
+            "firecrawl": self.firecrawl,
+            "bd_browser": self.bd_browser,
+            "basic_http": self.basic_http,
+        }
+        tiers = []
+        for defn in definitions:
+            t = copy.copy(defn)
+            t.scraper = scraper_map.get(defn.name)
+            tiers.append(t)
+        return sorted(tiers, key=lambda t: t.priority)
 
     def _extract_domain(self, url: str) -> str:
         """Extract domain from URL for rate limiting."""
@@ -323,8 +355,13 @@ class ScrapingPipeline:
         url_hash = hashlib.sha256(url.lower().strip().encode("utf-8")).hexdigest()
         return f"scrape:cache:{url_hash}"
 
-    async def execute(self, request: ScrapeRequest) -> ScrapeResult:
-        """Run scrape request through the full tiered pipeline with all Phase 1+2 features."""
+    async def execute(self, request: ScrapeRequest, job_id: str = "", agent_id: str | None = None) -> ScrapeResult:
+        """Run scrape request through the full tiered pipeline with all security/reliability features."""
+        from searchops.scraping.tier import classify_failure, is_premium_eligible, FailureClass
+        from searchops.scraping.bd_circuit_breaker import get_bd_breaker
+        from searchops.scraping.bd_spend_guard import SpendDecision
+        from searchops.feature_flags.manager import FeatureFlagSnapshot
+
         domain = self._extract_domain(request.url)
 
         # 0. Check rate limit before hitting any network tier
@@ -349,8 +386,6 @@ class ScrapingPipeline:
                 log.info("pipeline.cache_hit", url=request.url)
                 return ScrapeResult.model_validate(cached_data)
 
-        res: ScrapeResult | None = None
-
         # ── Fast Route: PDF Documents ──────────────────────────────────────────
         if request.mode == ScrapeMode.DOCLING_PDF or is_pdf_url(request.url):
             log.info("pipeline.pdf_route", url=request.url)
@@ -360,97 +395,111 @@ class ScrapingPipeline:
                 return await self._cache_and_return(cache_key, res)
             log.warning("pipeline.pdf_failed", url=request.url, status=res.status_code)
 
-        # ── Tier 0: StealthHTTPScraper (curl_cffi direct, ~150ms, $0) ────────
-        if getattr(self.settings, "stealth_enabled", True):
-            res = await self.stealth.scrape(request)
+        # 2. Snapshot ALL feature flags ONCE — eliminates 5× async lookups in hot path
+        if self.feature_flags is not None:
+            flags = await self.feature_flags.snapshot()
+        else:
+            flags = FeatureFlagSnapshot.empty()
+
+        # 3. Declarative tier loop — iterate sorted ScrapeTier list
+        res: ScrapeResult | None = None
+        last_status: int | None = None
+        last_failure_class: FailureClass | None = None
+        flag_dict = flags._values  # Raw dict access for is_eligible()
+
+        for tier in self._tiers:
+            # Check tier eligibility (feature flag + trigger_on constraint)
+            if not tier.is_eligible(last_failure_class, flag_dict):
+                continue
+
+            # Check circuit breaker for premium tiers
+            if tier.is_premium:
+                breaker = get_bd_breaker(tier.name)
+                if not breaker.can_execute():
+                    log.warning(
+                        "pipeline.circuit_open: skipping premium tier",
+                        tier=tier.name,
+                        url=request.url,
+                    )
+                    from searchops.scraping.bd_metrics import BD_REQUESTS
+                    BD_REQUESTS.labels(tier=tier.name.replace("bd_", ""), outcome="circuit_open").inc()
+                    continue
+
+                # Check spend guard for premium tiers
+                if self.spend_guard is not None and tier.cost_usd > 0:
+                    decision = await self.spend_guard.check_and_reserve(
+                        cost_usd=tier.cost_usd,
+                        job_id=job_id,
+                        tier=tier.name,
+                        agent_id=agent_id,
+                    )
+                    if decision == SpendDecision.HARD_REJECTED:
+                        log.warning(
+                            "pipeline.budget_exceeded: skipping premium tier",
+                            tier=tier.name,
+                            url=request.url,
+                        )
+                        continue
+
+            log.info(
+                f"pipeline.{tier.name}_tier",
+                url=request.url,
+                triggering_status=last_status,
+                is_premium=tier.is_premium,
+            )
+
+            # Execute the tier
+            try:
+                res = await tier.scraper.scrape(request)  # type: ignore[union-attr]
+            except Exception as exc:
+                log.error(f"pipeline.{tier.name}_exception", url=request.url, error=str(exc))
+                if tier.is_premium:
+                    await get_bd_breaker(tier.name).record_failure()
+                    if self.spend_guard and tier.cost_usd > 0:
+                        await self.spend_guard.rollback(tier.cost_usd, job_id, tier.name, agent_id)
+                res = ScrapeResult(
+                    url=request.url,
+                    final_url=request.url,
+                    status_code=500,
+                    scrape_mode_used=ScrapeMode.HTTP,
+                    metadata={"error": str(exc)},
+                )
+
             await self.rate_limiter.record_response(domain, res.status_code)
+
             if res.status_code == 200:
+                if tier.is_premium:
+                    await get_bd_breaker(tier.name).record_success()
                 res = self._prune_if_needed(res)
                 return await self._cache_and_return(cache_key, res)
 
-            # Hard blocks (403/404) — stealth didn't help; escalate immediately
-            if res.status_code in (403, 404):
-                log.info(
-                    "pipeline.stealth_hard_block",
-                    url=request.url,
-                    status=res.status_code,
-                )
-            else:
-                log.warning(
-                    "pipeline.stealth_failed",
-                    url=request.url,
-                    status=res.status_code,
-                )
+            # Track failure for next tier's eligibility check
+            last_status = res.status_code
+            last_failure_class = classify_failure(res.status_code)
 
-        # ── Tier 0b: ProxyRouter (curl_cffi + residential proxy, ~400ms) ─────
-        if self.proxy_router is not None and (res is None or res.status_code != 200):
-            log.info("pipeline.proxy_tier", url=request.url)
-            res = await self.proxy_router.scrape(request)
-            await self.rate_limiter.record_response(domain, res.status_code)
-            if res.status_code == 200:
-                res = self._prune_if_needed(res)
-                return await self._cache_and_return(cache_key, res)
+            # Record failure in circuit breaker
+            if tier.is_premium:
+                await get_bd_breaker(tier.name).record_failure()
+                if self.spend_guard and tier.cost_usd > 0:
+                    await self.spend_guard.rollback(tier.cost_usd, job_id, tier.name, agent_id)
+
             log.warning(
-                "pipeline.proxy_failed",
+                f"pipeline.{tier.name}_failed",
                 url=request.url,
                 status=res.status_code,
+                failure_class=last_failure_class,
             )
 
-        # ── Tier 0.5: Crawl4AIScraper (BM25+entropy pruning, ~800ms) ──────────
-        if self.feature_flags is None or await self.feature_flags.is_enabled("crawl4ai_enabled"):
-            log.info("pipeline.crawl4ai_tier", url=request.url)
-            res = await self.crawl4ai.scrape(request)
-            await self.rate_limiter.record_response(domain, res.status_code)
-            if res.status_code == 200:
-                return await self._cache_and_return(cache_key, res)
-            log.warning(
-                "pipeline.crawl4ai_failed",
-                url=request.url,
-                status=res.status_code,
-            )
+        # All tiers exhausted
+        return res or ScrapeResult(
+            url=request.url,
+            final_url=request.url,
+            status_code=500,
+            scrape_mode_used=ScrapeMode.HTTP,
+            metadata={"error": "All scraping tiers exhausted"},
+        )
 
-        # ── Tier 1: PooledPlaywrightScraper (full JS, ~1.5s) ─────────────────
-        if self.feature_flags is None or await self.feature_flags.is_enabled("playwright_enabled"):
-            res = await self.playwright.scrape(request)
-            await self.rate_limiter.record_response(domain, res.status_code)
-            if res.status_code == 200:
-                return await self._cache_and_return(cache_key, res)
-            log.warning(
-                "pipeline.playwright_failed",
-                url=request.url,
-                status=res.status_code,
-            )
-
-        # ── Tier 2: FirecrawlScraper (managed API, if key set) ────────────────
-        if self.feature_flags is None or await self.feature_flags.is_enabled("firecrawl_enabled"):
-            res = await self.firecrawl.scrape(request)
-            await self.rate_limiter.record_response(domain, res.status_code)
-            if res.status_code == 200:
-                return await self._cache_and_return(cache_key, res)
-            if res.status_code in (403, 404, 429):
-                log.info(
-                    "pipeline.firecrawl_block",
-                    url=request.url,
-                    status=res.status_code,
-                )
-                return res
-            log.warning(
-                "pipeline.firecrawl_failed",
-                url=request.url,
-                status=res.status_code,
-            )
-
-        # ── Tier 3: BasicHTTPScraper (last resort, ~500ms) ────────────────────
-        res = await self.basic_http.scrape(request)
-        await self.rate_limiter.record_response(domain, res.status_code)
-        if res.status_code == 200:
-            return await self._cache_and_return(cache_key, res)
-
-        return res
-
-    # ------------------------------------------------------------------ #
-    #  Helpers                                                              #
-    # ------------------------------------------------------------------ #
+    # ── Helpers ──────────────────────────────────────────────────────────────
 
     def _prune_if_needed(self, res: ScrapeResult) -> ScrapeResult:
         """
