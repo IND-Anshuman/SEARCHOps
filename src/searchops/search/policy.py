@@ -57,6 +57,17 @@ class SearchPolicyEngine:
                 SearchCapability.NEWS,
                 SearchCapability.FRESHNESS
             })
+        elif query.profile == SearchProfile.PREMIUM:
+            # Full premium capability set — routes to brightdata_serp first
+            caps.update({
+                SearchCapability.SEMANTIC,
+                SearchCapability.KEYWORD,
+                SearchCapability.METADATA,
+                SearchCapability.FRESHNESS,
+                SearchCapability.LOCALIZATION,
+                SearchCapability.SERP_FEATURES,
+                SearchCapability.ANTI_BOT,
+            })
             
         return caps
 
