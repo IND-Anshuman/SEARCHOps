@@ -15,6 +15,7 @@ from langgraph.graph.message import add_messages
 
 from searchops.core.context.research import ExecutionBudget, ResearchDepth, ResearchPlan, SearchExecution
 from searchops.knowledge.domain.entity import KGEntity, KGRelation
+from searchops.orchestration.evidence import Claim, EvidenceGap, dedupe_claims
 from searchops.search.contracts import SearchResultItem
 
 
@@ -70,6 +71,10 @@ class ResearchState(TypedDict, total=False):
     entities: Annotated[list[KGEntity], dedupe_entities]
     relations: Annotated[list[KGRelation], dedupe_relations]
 
+    # ── Typed Evidence (claims + coverage gaps) ───────────────────────────
+    evidence_claims: Annotated[list[Claim], dedupe_claims]        # merges & dedupes by claim.id
+    evidence_gaps: Annotated[list[EvidenceGap], replace_list]     # replaced wholesale each round
+
     # ── Report ────────────────────────────────────────────────────────────
     report_sections: Annotated[list[str], operator.add]
     final_report: str
@@ -81,5 +86,6 @@ class ResearchState(TypedDict, total=False):
     # ── Metadata ──────────────────────────────────────────────────────────
     error: str | None
     iteration: int
+    loop_count: int  # increments per critic→gap_analyst→planner cycle; caps total rounds
 
 
