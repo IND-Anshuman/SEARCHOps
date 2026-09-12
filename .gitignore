@@ -117,3 +117,6 @@ otelcol/
 
 # Frontend local environment secrets
 frontend/.env.local
+
+
+.hermes
