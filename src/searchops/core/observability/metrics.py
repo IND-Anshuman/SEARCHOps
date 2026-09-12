@@ -230,6 +230,57 @@ CIRCUIT_BREAKER_STATE = Gauge(
 
 # ── Token economy & context engineering metrics ───────────────────────────────
 
+# ── Per-node token-economy & LLM accounting metrics ───────────────────────────
+# node: planner|search|rat|rank|scrape|extract_knowledge|extract_claims|critic|
+#       verifier|gap_analyst|state_pruner|report_writer
+# _NODE_* metrics exist so ops can answer "which graph node consumed the most
+# tokens" and whether caching actually reduced live API hits.
+
+# INVOCATIONS / RESULT — every graph-node LLM entry point increments one of:
+NODE_INVOCATIONS_TOTAL = Counter(
+    name="searchops_node_invocations_total",
+    documentation="Graph node invocations grouped by node name & outcome",
+    labelnames=["node", "outcome"],  # outcome: invoked|ok|error|cache_hit|skipped
+    registry=_REGISTRY,
+)
+
+NODE_LLM_TOKENS_IN_TOTAL = Counter(
+    name="searchops_node_llm_tokens_in_total",
+    documentation="LLM input tokens consumed by a graph node",
+    labelnames=["node", "cache_hit"],  # cache_hit: true|false
+    registry=_REGISTRY,
+)
+
+NODE_LLM_TOKENS_OUT_TOTAL = Counter(
+    name="searchops_node_llm_tokens_out_total",
+    documentation="LLM output tokens produced by a graph node",
+    labelnames=["node"],
+    registry=_REGISTRY,
+)
+
+NODE_LLM_COST_USD_TOTAL = Counter(
+    name="searchops_node_llm_cost_usd_total",
+    documentation="Total LLM cost in USD attributed to a graph node",
+    labelnames=["node"],
+    registry=_REGISTRY,
+)
+
+NODE_LLM_REQUEST_DURATION_SECONDS = Histogram(
+    name="searchops_node_llm_request_duration_seconds",
+    documentation="LLM call latency in seconds per graph node",
+    labelnames=["node"],
+    buckets=(0.1, 0.5, 1.0, 2.5, 5.0, 10.0, 30.0, 60.0, 120.0),
+    registry=_REGISTRY,
+)
+
+# Dedicated evidence-claim counters (highest token consumer in the design).
+EXTRACT_CLAIMS_TOTAL = Counter(
+    name="searchops_extract_claims_total",
+    documentation="Claims extracted from scraped documents",
+    labelnames=["node", "status"],  # status: extracted|cached|error
+    registry=_REGISTRY,
+)
+
 STATE_TOKENS_COMPACTED_TOTAL = Counter(
     name="searchops_state_tokens_compacted_total",
     documentation="Total state compaction events executed",
