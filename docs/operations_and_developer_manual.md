@@ -48,8 +48,10 @@ SEARCHOps is an enterprise-grade autonomous research platform. This manual provi
 
 | Variable Name | Required | Default Value | Description | Example Value |
 | :--- | :---: | :--- | :--- | :--- |
-| `SEARCHOPS_ENV` | No | `development` | Active environment (`development`, `staging`, `production`) | `production` |
-| `SEARCHOPS_SECRET_KEY` | Yes | `dev-secret-key...` | JWT/HMAC Secret key for API authentication | `c8f1d...94b2` |
+| `APP_ENV` | No | `development` | Active environment (`development`, `staging`, `production`, `testing`). The only env var the config layer reads for profile selection. | `production` |
+| `APP_SECRET_KEY` | Yes | `dev-secret-key...` | JWT/HMAC secret key; also the default request credential for `X-API-Key` / `Bearer` auth | `c8f1d...94b2` |
+| `SEARCHOPS_API_KEY` | No | `""` | Dedicated request credential. When set it takes precedence over `APP_SECRET_KEY` for auth, so it can be rotated without invalidating issued JWTs | `a91f...` |
+| `AUTH_DISABLED_EXPLICITLY` | No | `false` | Deliberately run unauthenticated. Never inferred from `APP_ENV`; every request logs a warning when true | `false` |
 | `OPENAI_API_KEY` | Yes | `sk-proj-...` | Primary OpenAI API secret key | `sk-proj-123456` |
 | `ANTHROPIC_API_KEY` | No | `""` | Anthropic Claude API key | `sk-ant-123456` |
 | `GOOGLE_API_KEY` | No | `""` | Google Gemini API key | `AIzaSy123456` |

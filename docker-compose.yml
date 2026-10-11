@@ -1,0 +1,138 @@
+# SEARCHOps infrastructure services.
+#
+# Brings up every dependency the platform needs so `make docker-up` is a single
+# command. The application itself runs on the host (see the `api` profile) so
+# that live-reloading and the developer's own toolchain stay in play; only the
+# stateful services are containerised.
+#
+#   make docker-up      # start the four data services
+#   make docker-up ARGS="--profile api"   # also start the API container
+#   make docker-ps
+#   make docker-logs
+#   make docker-down
+#
+# Defaults below match the defaults in src/searchops/config/subsystems/*.py, so
+# the app works against this compose file with no .env changes.
+
+name: searchops
+
+services:
+  postgres:
+    image: postgres:16-alpine
+    container_name: searchops-postgres
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: searchops
+      POSTGRES_PASSWORD: searchops_dev_pass
+      POSTGRES_DB: searchops
+    ports:
+      - "5432:5432"
+    volumes:
+      - searchops-postgres-data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U searchops -d searchops"]
+      interval: 10s
+      timeout: 5s
+      retries: 10
+      start_period: 20s
+
+  redis:
+    image: redis:7-alpine
+    container_name: searchops-redis
+    restart: unless-stopped
+    # appendonly: the URL seen-set and the scrape cache are correctness-relevant
+    # state — losing them on restart makes a crawl re-fetch and re-pay.
+    command: ["redis-server", "--appendonly", "yes", "--maxmemory-policy", "noeviction"]
+    ports:
+      - "6379:6379"
+    volumes:
+      - searchops-redis-data:/data
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 10s
+      timeout: 3s
+      retries: 10
+
+  qdrant:
+    image: qdrant/qdrant:v1.12.4
+    container_name: searchops-qdrant
+    restart: unless-stopped
+    ports:
+      - "6333:6333"  # REST
+      - "6334:6334"  # gRPC (config sets qdrant_prefer_grpc: true)
+    volumes:
+      - searchops-qdrant-data:/qdrant/storage
+    environment:
+      QDRANT__SERVICE__API_KEY: "${QDRANT_API_KEY:-}"
+    healthcheck:
+      test: ["CMD-SHELL", "bash -c 'exec 3<>/dev/tcp/127.0.0.1/6333 && echo -e \"GET /healthz HTTP/1.1\\r\\nHost: localhost\\r\\nConnection: close\\r\\n\\r\\n\" >&3 && grep -q \"200\" <&3'"]
+      interval: 15s
+      timeout: 5s
+      retries: 10
+      start_period: 20s
+
+  neo4j:
+    image: neo4j:5.23-community
+    container_name: searchops-neo4j
+    restart: unless-stopped
+    environment:
+      # Matches KnowledgeGraphSettings defaults so no .env is required.
+      NEO4J_AUTH: "neo4j/searchops_dev_pass"
+      NEO4J_server_memory_heap_initial__size: "512m"
+      NEO4J_server_memory_heap_max__size: "2G"
+      NEO4J_server_memory_pagecache_size: "1G"
+    ports:
+      - "7474:7474"  # HTTP browser
+      - "7687:7687"  # Bolt
+    volumes:
+      - searchops-neo4j-data:/data
+    healthcheck:
+      # Cypher-shell is the only reliable readiness probe for Bolt.
+      test: ["CMD-SHELL", "cypher-shell -u neo4j -p searchops_dev_pass 'RETURN 1' || exit 1"]
+      interval: 15s
+      timeout: 10s
+      retries: 12
+      start_period: 45s
+
+  # ── Optional: the API itself ───────────────────────────────────────────────
+  # Not started by default — developers normally run the API on the host so
+  # that edits reload instantly. Enable with: docker compose --profile api up -d
+  api:
+    profiles: ["api"]
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: searchops-api
+    restart: unless-stopped
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+      qdrant:
+        condition: service_healthy
+      neo4j:
+        condition: service_healthy
+    environment:
+      APP_ENV: development
+      DATABASE_HOST: postgres
+      REDIS_HOST: redis
+      QDRANT_HOST: qdrant
+      NEO4J_URI: "bolt://neo4j:7687"
+    env_file:
+      - path: .env
+        required: false
+    ports:
+      - "8000:8000"
+    healthcheck:
+      test: ["CMD-SHELL", "python -c \"import urllib.request,sys; sys.exit(0 if urllib.request.urlopen('http://localhost:8000/health', timeout=5).status == 200 else 1)\""]
+      interval: 30s
+      timeout: 10s
+      retries: 5
+      start_period: 40s
+
+volumes:
+  searchops-postgres-data:
+  searchops-redis-data:
+  searchops-qdrant-data:
+  searchops-neo4j-data:
