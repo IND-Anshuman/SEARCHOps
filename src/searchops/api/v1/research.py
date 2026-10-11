@@ -88,6 +88,11 @@ class JobStatusResponse(BaseModel):
     # client so a synthesised report is never shown as if the model wrote it.
     report_quality: str | None = None
     report_user_message: str | None = None
+    # The canonical block model for this report. Declared here because
+    # JobStatusResponse sets extra="ignore" — an undeclared field is silently
+    # stripped, which is how report_quality was lost before. Every block-level
+    # feature (export, where-to-go-next, study guide, trust header) reads this.
+    report_document: dict[str, Any] | None = None
     # Structured evidence: what the run established, and what it could not.
     evidence_gaps: list[dict[str, Any]] = []
     evidence_claims: list[dict[str, Any]] = []

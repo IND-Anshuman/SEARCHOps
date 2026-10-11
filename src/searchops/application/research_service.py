@@ -29,6 +29,7 @@ from typing import TYPE_CHECKING, Any
 
 import structlog
 
+from searchops.application.report_document import ReportDocument
 from searchops.core.context.execution import ExecutionContext
 from searchops.core.context.research import ResearchDepth, ScrapePlan
 from searchops.knowledge.extractor import EntityExtractor
@@ -270,6 +271,12 @@ class ResearchApplicationService:
             # could NOT establish rather than only what it did.
             evidence_gaps: list[Any] = []
             evidence_claims: list[Any] = []
+            # Canonical block model for the report. Built once, at the end,
+            # from the evidence the run actually produced — so every
+            # block-level feature (export, where-to-go-next, study guide,
+            # trust header) reads the same addressable structure instead of
+            # re-parsing Markdown its own way.
+            report_document: dict[str, Any] = {}
 
             # Stream graph updates — each chunk is a dict of node_name → state_delta
             async for updates in graph.astream(initial_state, stream_mode="updates"):
@@ -417,6 +424,26 @@ class ResearchApplicationService:
                 },
             )
 
+            # Build the canonical block document from what the run produced.
+            # Never synthesised content: if the model refused, the document is
+            # built from the evidence fallback exactly as the user saw it.
+            if final_report:
+                try:
+                    report_document = ReportDocument.from_markdown(
+                        job_id=job_id,
+                        query=query,
+                        markdown=final_report,
+                        claims=evidence_claims,
+                        entities=entities,
+                        gaps=evidence_gaps,
+                        quality=report_quality,
+                        user_message=report_user_message,
+                    ).to_dict()
+                except Exception:  # pragma: no cover - defensive
+                    # A malformed report must not fail an otherwise complete
+                    # job; the Markdown string is still delivered.
+                    log.warning("report_document.build_failed", job_id=job_id)
+
             await self.job_state_manager.update_job(
                 job_id,
                 {
@@ -424,6 +451,7 @@ class ResearchApplicationService:
                     "progress": 100,
                     "nodes": [{**n, "status": "completed"} for n in nodes_map.values()],
                     "final_report": final_report,
+                    "report_document": report_document,
                     "report_quality": report_quality,
                     "report_user_message": report_user_message,
                     "evidence_gaps": evidence_gaps,
