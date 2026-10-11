@@ -7,17 +7,17 @@ to avoid touching real Redis / LangGraph dependencies.
 
 from __future__ import annotations
 
-from unittest.mock import AsyncMock, patch
+from unittest.mock import AsyncMock
 
 import pytest
+from fastapi import FastAPI
 from fastapi.testclient import TestClient
 
-from searchops.api.v1.research import router, StartResearchRequest, _get_service
+from searchops.api.v1.research import _get_service, router
 from searchops.application.research_service import ResearchApplicationService, ResearchJobStatus
-from fastapi import FastAPI
-
 
 # ── Helpers ───────────────────────────────────────────────────────────────────
+
 
 def _build_test_app(mock_service: ResearchApplicationService) -> FastAPI:
     """Build a minimal FastAPI app with the research router and injected mock."""
@@ -31,17 +31,21 @@ def _build_test_app(mock_service: ResearchApplicationService) -> FastAPI:
 
 # ── Tests ──────────────────────────────────────────────────────────────────────
 
+
 @pytest.mark.unit
 def test_start_research_returns_202():
     mock_svc = AsyncMock(spec=ResearchApplicationService)
     mock_svc.start_research.return_value = "job-abc-123"
 
     client = TestClient(_build_test_app(mock_svc), raise_server_exceptions=True)
-    resp = client.post("/api/v1/research/", json={
-        "query": "What is quantum computing?",
-        "depth": "standard",
-        "max_sources": 5,
-    })
+    resp = client.post(
+        "/api/v1/research/",
+        json={
+            "query": "What is quantum computing?",
+            "depth": "standard",
+            "max_sources": 5,
+        },
+    )
 
     assert resp.status_code == 202
     body = resp.json()
@@ -51,6 +55,7 @@ def test_start_research_returns_202():
         query="What is quantum computing?",
         depth="standard",
         max_sources=5,
+        mode="precision",
     )
 
 
@@ -79,6 +84,92 @@ def test_get_research_status_found():
     assert body["status"] == ResearchJobStatus.COMPLETED
     assert body["entity_count"] == 3
     assert "qubits" in body["final_report"]
+
+
+@pytest.mark.unit
+def test_get_research_status_exposes_report_provenance():
+    """Regression: report_quality / report_user_message were computed by
+    report_writer and stored in state, but JobStatusResponse never declared
+    them, so pydantic silently stripped them before the response. A degraded
+    (synthesised) report reached the UI looking like a normal model report.
+    """
+    mock_svc = AsyncMock(spec=ResearchApplicationService)
+    mock_svc.get_job_status.return_value = {
+        "job_id": "job-abc-123",
+        "status": ResearchJobStatus.COMPLETED,
+        "query": "qec",
+        "progress": 100,
+        "final_report": "# Research Report: qec  \n\n2 sources were retrieved...",
+        "report_quality": "refusal",
+        "report_user_message": (
+            "The model declined to summarise this query, so this report was built from the sources that were found."
+        ),
+        "citations": ["https://a.com", "https://b.com"],
+        "entity_count": 0,
+        "source_count": 2,
+    }
+
+    client = TestClient(_build_test_app(mock_svc))
+    resp = client.get("/api/v1/research/job-abc-123")
+
+    assert resp.status_code == 200
+    body = resp.json()
+    assert body["report_quality"] == "refusal"
+    assert "declined" in body["report_user_message"]
+
+
+@pytest.mark.unit
+def test_get_research_status_exposes_evidence_gaps_and_claims():
+    """The critic emits typed EvidenceGap objects; they must reach the client
+    so the UI can show what the run could not establish."""
+    mock_svc = AsyncMock(spec=ResearchApplicationService)
+    mock_svc.get_job_status.return_value = {
+        "job_id": "job-abc-123",
+        "status": ResearchJobStatus.COMPLETED,
+        "progress": 100,
+        "evidence_gaps": [
+            {"description": "No data on cost per logical qubit", "target_query": "qec cost", "priority": 2}
+        ],
+        "evidence_claims": [
+            {
+                "id": "c1",
+                "text": "Surface codes scale logarithmically.",
+                "status": "supported",
+                "confidence": 0.9,
+                "citations": [{"url": "https://a.com"}],
+            }
+        ],
+    }
+
+    client = TestClient(_build_test_app(mock_svc))
+    resp = client.get("/api/v1/research/job-abc-123")
+
+    assert resp.status_code == 200
+    body = resp.json()
+    assert len(body["evidence_gaps"]) == 1
+    assert body["evidence_gaps"][0]["description"].startswith("No data on cost")
+    assert len(body["evidence_claims"]) == 1
+    assert body["evidence_claims"][0]["status"] == "supported"
+
+
+@pytest.mark.unit
+def test_get_research_status_provenance_defaults_to_none():
+    """A job that never reached the report writer must not fabricate a quality."""
+    mock_svc = AsyncMock(spec=ResearchApplicationService)
+    mock_svc.get_job_status.return_value = {
+        "job_id": "job-abc-123",
+        "status": ResearchJobStatus.RUNNING,
+        "progress": 40,
+    }
+
+    client = TestClient(_build_test_app(mock_svc))
+    resp = client.get("/api/v1/research/job-abc-123")
+
+    assert resp.status_code == 200
+    body = resp.json()
+    assert body["report_quality"] is None
+    assert body["evidence_gaps"] == []
+    assert body["evidence_claims"] == []
 
 
 @pytest.mark.unit
@@ -123,8 +214,27 @@ def test_get_research_graph():
     mock_svc.get_job_status.return_value = {
         "job_id": "job-abc-123",
         "status": "completed",
-        "entities": [{"id": "e1", "canonical_id": "E1", "name": "N1", "entity_type": "concept", "description": "D1", "confidence": 0.9}],
-        "relations": [{"id": "r1", "source_id": "e1", "target_id": "e1", "source_canonical_id": "E1", "target_canonical_id": "E1", "relation_type": "TYPE", "description": "DESC"}]
+        "entities": [
+            {
+                "id": "e1",
+                "canonical_id": "E1",
+                "name": "N1",
+                "entity_type": "concept",
+                "description": "D1",
+                "confidence": 0.9,
+            }
+        ],
+        "relations": [
+            {
+                "id": "r1",
+                "source_id": "e1",
+                "target_id": "e1",
+                "source_canonical_id": "E1",
+                "target_canonical_id": "E1",
+                "relation_type": "TYPE",
+                "description": "DESC",
+            }
+        ],
     }
 
     client = TestClient(_build_test_app(mock_svc))
@@ -143,7 +253,16 @@ def test_get_research_chunks():
     mock_svc.get_job_status.return_value = {
         "job_id": "job-abc-123",
         "status": "completed",
-        "chunks": [{"id": "c1", "documentTitle": "T1", "sourceUrl": "U1", "similarityScore": 0.95, "tokenCount": 100, "chunkPreview": "P1"}]
+        "chunks": [
+            {
+                "id": "c1",
+                "documentTitle": "T1",
+                "sourceUrl": "U1",
+                "similarityScore": 0.95,
+                "tokenCount": 100,
+                "chunkPreview": "P1",
+            }
+        ],
     }
 
     client = TestClient(_build_test_app(mock_svc))
@@ -160,7 +279,17 @@ def test_get_research_logs():
     mock_svc.get_job_status.return_value = {
         "job_id": "job-abc-123",
         "status": "completed",
-        "logs": [{"id": "l1", "stream": "s1", "eventType": "t1", "correlationId": "job-abc-123", "timestamp": "12:00", "payload": {}, "level": "info"}]
+        "logs": [
+            {
+                "id": "l1",
+                "stream": "s1",
+                "eventType": "t1",
+                "correlationId": "job-abc-123",
+                "timestamp": "12:00",
+                "payload": {},
+                "level": "info",
+            }
+        ],
     }
 
     client = TestClient(_build_test_app(mock_svc))
@@ -169,3 +298,45 @@ def test_get_research_logs():
     body = resp.json()
     assert len(body["logs"]) == 1
     assert body["logs"][0]["eventType"] == "t1"
+
+
+@pytest.mark.unit
+def test_start_research_accepts_corpus_mode() -> None:
+    """A corpus request must reach the service with its mode preserved."""
+    mock_svc = AsyncMock(spec=ResearchApplicationService)
+    mock_svc.start_research.return_value = "job-corpus-1"
+
+    client = TestClient(_build_test_app(mock_svc), raise_server_exceptions=True)
+    resp = client.post(
+        "/api/v1/research/",
+        json={
+            "query": "Build a dataset of vector database benchmarks",
+            "depth": "deep",
+            "mode": "corpus",
+            "max_sources": 40,
+        },
+    )
+
+    assert resp.status_code == 202
+    mock_svc.start_research.assert_called_once_with(
+        query="Build a dataset of vector database benchmarks",
+        depth="deep",
+        max_sources=40,
+        mode="corpus",
+    )
+
+
+@pytest.mark.unit
+def test_start_research_rejects_unknown_mode() -> None:
+    """An unknown mode is a clear 422, never a silently coerced run."""
+    mock_svc = AsyncMock(spec=ResearchApplicationService)
+    client = TestClient(_build_test_app(mock_svc), raise_server_exceptions=True)
+
+    resp = client.post(
+        "/api/v1/research/",
+        json={"query": "What is quantum computing?", "mode": "exhaustive"},
+    )
+
+    assert resp.status_code == 422
+    # The service was never invoked — no job was created for a bogus mode.
+    mock_svc.start_research.assert_not_called()
