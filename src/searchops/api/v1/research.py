@@ -16,12 +16,19 @@ are ever created inside a request handler.
 
 from __future__ import annotations
 
+import tempfile
+from pathlib import Path
 from typing import Any
 
 import structlog
 from fastapi import APIRouter, Depends, HTTPException, Request, status
+from fastapi.responses import FileResponse
 from pydantic import BaseModel, Field
 
+from searchops.application.exports.deck import export_deck
+from searchops.application.exports.docx_export import export_docx
+from searchops.application.exports.pdf_export import ExportUnavailableError, export_pdf
+from searchops.application.report_document import ReportDocument
 from searchops.application.research_service import ResearchApplicationService, ResearchJobStatus
 from searchops.core.context.research import ResearchMode
 
@@ -371,3 +378,155 @@ async def delete_research_job(
     service: ResearchApplicationService = Depends(_get_service),
 ) -> None:
     await service.job_state_manager.delete_job(job_id)
+
+
+# ── Report export ────────────────────────────────────────────────────────────
+#
+# A report is only useful if the user can deliver it. Deck/Word/PDF are what
+# people actually need to hand over, and both Microsoft and Google shipped the
+# same conversions in 2026 — without them users paste into a competitor.
+#
+# The exports carry the claim→source binding into the artifact (PPTX speaker
+# notes, DOCX footnotes), which a generic markdown converter cannot do because
+# it has no binding to read from.
+
+_EXPORT_DIR = Path(tempfile.gettempdir()) / "searchops_exports"
+
+_PPTX_MIME = "application/vnd.openxmlformats-officedocument.presentationml.presentation"
+_DOCX_MIME = "application/vnd.openxmlformats-officedocument.wordprocessingml.document"
+_PDF_MIME = "application/pdf"
+
+
+def _load_document(job_data: dict[str, Any]) -> ReportDocument:
+    """Rebuild the block document for a job.
+
+    Prefers the persisted ``report_document``. Falls back to parsing
+    ``final_report`` so a job completed before the block model existed still
+    exports — never a 500 on an older job.
+    """
+    raw = job_data.get("report_document")
+    if raw:
+        try:
+            return ReportDocument.from_dict(raw)
+        except Exception:  # pragma: no cover - defensive
+            log.warning("export.document_rebuild_failed", job_id=job_data.get("job_id"))
+    return ReportDocument.from_markdown(
+        job_id=str(job_data.get("job_id", "")),
+        query=str(job_data.get("query", "") or ""),
+        markdown=str(job_data.get("final_report", "") or ""),
+        quality=str(job_data.get("report_quality", "") or "ok"),
+        user_message=str(job_data.get("report_user_message", "") or ""),
+    )
+
+
+def _require_completed_job(job_data: dict[str, Any] | None, job_id: str) -> dict[str, Any]:
+    if job_data is None:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail=f"Research job '{job_id}' not found.",
+        )
+    if not job_data.get("final_report"):
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail="This job has not produced a report yet. Export is available once it completes.",
+        )
+    return job_data
+
+
+@router.get(
+    "/{job_id}/export/deck",
+    summary="Export the report as a PowerPoint deck",
+    response_class=FileResponse,
+)
+async def export_research_deck(
+    job_id: str,
+    service: ResearchApplicationService = Depends(_get_service),
+) -> FileResponse:
+    """Export a completed report as .pptx.
+
+    Speaker notes carry the claims backing each slide, so a reader can check
+    what they are shown.
+    """
+    job_data = _require_completed_job(await service.job_state_manager.get_job(job_id), job_id)
+    doc = _load_document(job_data)
+    try:
+        path = export_deck(
+            doc,
+            out_dir=_EXPORT_DIR,
+            title=str(job_data.get("query", "") or "Research Report"),
+        )
+    except Exception as exc:
+        log.error("export.deck.failed", job_id=job_id, error=str(exc))
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=f"Deck export failed: {exc}",
+        ) from exc
+    return FileResponse(path=str(path), media_type=_PPTX_MIME, filename=path.name)
+
+
+@router.get(
+    "/{job_id}/export/docx",
+    summary="Export the report as a Word document",
+    response_class=FileResponse,
+)
+async def export_research_docx(
+    job_id: str,
+    service: ResearchApplicationService = Depends(_get_service),
+) -> FileResponse:
+    """Export a completed report as .docx.
+
+    Real heading styles and per-section claim footnotes, so the file survives
+    into a compliance record or an email thread intact.
+    """
+    job_data = _require_completed_job(await service.job_state_manager.get_job(job_id), job_id)
+    doc = _load_document(job_data)
+    try:
+        path = export_docx(
+            doc,
+            out_dir=_EXPORT_DIR,
+            title=str(job_data.get("query", "") or "Research Report"),
+        )
+    except Exception as exc:
+        log.error("export.docx.failed", job_id=job_id, error=str(exc))
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=f"Word export failed: {exc}",
+        ) from exc
+    return FileResponse(path=str(path), media_type=_DOCX_MIME, filename=path.name)
+
+
+@router.get(
+    "/{job_id}/export/pdf",
+    summary="Export the report as a PDF",
+    response_class=FileResponse,
+)
+async def export_research_pdf(
+    job_id: str,
+    service: ResearchApplicationService = Depends(_get_service),
+) -> FileResponse:
+    """Export a completed report as .pdf via headless Chromium.
+
+    Fails loudly when Chromium is unavailable — an export that quietly returns
+    an empty file is discovered only after the document has been sent.
+    """
+    job_data = _require_completed_job(await service.job_state_manager.get_job(job_id), job_id)
+    doc = _load_document(job_data)
+    try:
+        path = await export_pdf(
+            doc,
+            out_dir=_EXPORT_DIR,
+            title=str(job_data.get("query", "") or "Research Report"),
+        )
+    except ExportUnavailableError as exc:
+        log.error("export.pdf.unavailable", job_id=job_id, error=str(exc))
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail=str(exc),
+        ) from exc
+    except Exception as exc:
+        log.error("export.pdf.failed", job_id=job_id, error=str(exc))
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=f"PDF export failed: {exc}",
+        ) from exc
+    return FileResponse(path=str(path), media_type=_PDF_MIME, filename=path.name)
