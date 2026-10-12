@@ -101,11 +101,18 @@ def _serialisable_document(doc: ReportDocument) -> dict[str, Any]:
 
 
 def _as_primitive(item: Any) -> Any:
-    """Coerce one evidence record to JSON-safe primitives."""
+    """Coerce one evidence record to JSON-safe primitives.
+
+    Two shapes must be handled, because evidence arrives as pydantic models
+    from the live pipeline and as plain dicts after a Redis round-trip. The
+    dict branch has to be explicit: a generic recursion turns a ``citations``
+    *list* into an empty dict and silently drops every source URL, which is
+    exactly the kind of quiet data loss this module exists to prevent.
+    """
     if item is None or isinstance(item, (str, int, float, bool)):
         return item
     if isinstance(item, dict):
-        return {str(k): _as_primitive(v) for k, v in item.items()}
+        return _project_dict(item)
 
     record: dict[str, Any] = {}
     for name in ("id", "text", "status", "confidence", "name", "entity_type", "description"):
@@ -114,17 +121,42 @@ def _as_primitive(item: Any) -> Any:
             continue
         record[name] = _as_primitive(value)
 
-    citations = _field(item, "citations", None)
-    if citations:
-        projected = []
-        for citation in citations:
-            url = citation.get("url") if isinstance(citation, dict) else getattr(citation, "url", None)
-            if url:
-                projected.append({"url": str(url)})
-        if projected:
-            record["citations"] = projected
+    projected = _project_citations(_field(item, "citations", None))
+    if projected:
+        record["citations"] = projected
 
     return record
+
+
+def _project_dict(item: dict[str, Any]) -> dict[str, Any]:
+    """Project a dict-shaped evidence record, preserving citations."""
+    record: dict[str, Any] = {}
+    for name in ("id", "text", "status", "confidence", "name", "entity_type", "description"):
+        value = item.get(name)
+        if value is None:
+            continue
+        record[name] = _as_primitive(value)
+
+    projected = _project_citations(item.get("citations"))
+    if projected:
+        record["citations"] = projected
+    return record
+
+
+def _project_citations(citations: Any) -> list[dict[str, str]]:
+    """Keep only the source URL of each citation.
+
+    Anything without a URL is dropped rather than rendered as an empty entry —
+    a citation with no link is not evidence.
+    """
+    if not citations:
+        return []
+    projected: list[dict[str, str]] = []
+    for citation in citations:
+        url = citation.get("url") if isinstance(citation, dict) else getattr(citation, "url", None)
+        if url:
+            projected.append({"url": str(url)})
+    return projected
 
 
 # ── Deterministic operations (no model call) ─────────────────────────────────

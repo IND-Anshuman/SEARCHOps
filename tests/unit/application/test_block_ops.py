@@ -379,3 +379,30 @@ def test_serialisation_never_invents_missing_fields():
     assert claim["id"] == "c1"
     assert "confidence" not in claim
     assert "status" not in claim
+
+
+def test_dict_shaped_claims_keep_their_citation_urls():
+    """Regression: dict claims take a different branch, and the generic
+    recursion turned a citations LIST into an empty dict — silently dropping
+    every source URL. Live jobs hit this path, because evidence crosses Redis
+    as plain dicts.
+    """
+    import json
+
+    doc = ReportDocument.from_markdown(
+        "j",
+        "q",
+        MD_DOC,
+        claims=[
+            {
+                "id": "c1",
+                "text": "Surface codes scale logarithmically.",
+                "status": "supported",
+                "citations": [{"url": "https://ibm.com/a"}],
+            }
+        ],
+    )
+    result = hide(doc, _para(doc).id)
+    claims = json.loads(json.dumps(result.to_dict()))["document"]["claims"]
+
+    assert claims[0]["citations"] == [{"url": "https://ibm.com/a"}], "a dict-shaped claim must keep its source URL"
