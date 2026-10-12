@@ -5,6 +5,11 @@ import rehypeHighlight from 'rehype-highlight';
 import 'highlight.js/styles/github-dark.css';
 import { useExecutionStore } from '../shared/store/useExecutionStore';
 import { ReportInsights } from './ReportInsights';
+import {
+  BlockEditor,
+  type ReportDocumentData,
+} from './BlockEditor';
+import { API_BASE, API_KEY } from '../shared/store/executionStore';
 import { FileText, Download, Copy, Check, Search, BookOpen, X } from 'lucide-react';
 
 interface TocEntry {
@@ -43,6 +48,32 @@ export const ReportsViewer: React.FC = () => {
   const [searchVisible, setSearchVisible] = useState(false);
   const contentRef = useRef<HTMLDivElement>(null);
   const searchRef = useRef<HTMLInputElement>(null);
+  // The block document is the editable source of truth. It starts null and is
+  // fetched; while absent we fall back to rendering the plain markdown so the
+  // report is never blocked on it.
+  const [blockDoc, setBlockDoc] = useState<ReportDocumentData | null>(null);
+
+  // Fetch the block document so the report can be edited. A failed fetch is
+  // not fatal: the plain markdown still renders.
+  useEffect(() => {
+    if (!report?.id) return;
+    let cancelled = false;
+    void (async () => {
+      try {
+        const res = await fetch(`${API_BASE}/api/v1/research/${report.id}`, {
+          headers: { ...(API_KEY ? { 'X-API-Key': API_KEY } : {}) },
+        });
+        if (!res.ok) return;
+        const data = (await res.json()) as { report_document?: ReportDocumentData | null };
+        if (!cancelled && data.report_document) setBlockDoc(data.report_document);
+      } catch {
+        /* leave document null — the markdown fallback covers this */
+      }
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, [report?.id]);
 
   // Focus search input when visible
   useEffect(() => {
@@ -225,13 +256,21 @@ export const ReportsViewer: React.FC = () => {
             </div>
           </div>
 
-          <ReactMarkdown
-            remarkPlugins={[remarkGfm]}
-            rehypePlugins={[rehypeHighlight]}
-            components={components as never}
-          >
-            {filteredContent}
-          </ReactMarkdown>
+          {blockDoc ? (
+            <BlockEditor
+              jobId={report.id}
+              doc={blockDoc}
+              onDocumentChange={setBlockDoc}
+            />
+          ) : (
+            <ReactMarkdown
+              remarkPlugins={[remarkGfm]}
+              rehypePlugins={[rehypeHighlight]}
+              components={components as never}
+            >
+              {filteredContent}
+            </ReactMarkdown>
+          )}
         </div>
 
         {/* Insights: coverage gaps, study guide, glossary, evidence check. */}

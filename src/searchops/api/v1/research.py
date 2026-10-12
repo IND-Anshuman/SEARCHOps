@@ -530,3 +530,70 @@ async def export_research_pdf(
             detail=f"PDF export failed: {exc}",
         ) from exc
     return FileResponse(path=str(path), media_type=_PDF_MIME, filename=path.name)
+
+
+# ── Block operations ─────────────────────────────────────────────────────────
+#
+# The interactive layer. A report used to be one opaque Markdown string; it is
+# now addressable blocks, and a user can act on any one of them. Each op
+# returns the whole updated document so the client re-renders from a single
+# source of truth rather than patching locally and drifting.
+#
+# Contract: an operation that cannot produce usable text leaves the document
+# untouched and says why. A failed edit must never look like a successful one.
+
+from searchops.application.exports.block_ops import apply_op
+
+
+class BlockOpRequest(BaseModel):
+    """Request body for a block operation."""
+
+    op: str = Field(description="condense | deepen | rewrite | hide | unhide | split")
+    at_char: int = Field(default=0, description="Split position, for op=split")
+
+
+@router.post(
+    "/{job_id}/blocks/{block_id}/op",
+    summary="Apply an operation to one block of the report",
+)
+async def apply_block_operation(
+    job_id: str,
+    block_id: str,
+    body: BlockOpRequest,
+    service: ResearchApplicationService = Depends(_get_service),
+) -> dict[str, Any]:
+    """Condense, deepen, rewrite, hide, unhide or split one block.
+
+    Returns the updated document. On failure ``ok`` is False and ``reason``
+    explains why in language the UI can show a user; the document is returned
+    unchanged.
+    """
+    job_data = await service.job_state_manager.get_job(job_id)
+    if job_data is None:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail=f"Research job '{job_id}' not found.",
+        )
+    if not job_data.get("final_report"):
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail="This job has not produced a report yet.",
+        )
+
+    doc = _load_document(job_data)
+    result = await apply_op(
+        doc,
+        block_id,
+        body.op,
+        router=service.llm_router,
+        at_char=body.at_char,
+    )
+
+    if result.ok:
+        # Persist so the edit survives a reload and reaches other clients.
+        try:
+            await service.job_state_manager.update_job(job_id, {"report_document": result.document.to_dict()})
+        except Exception as exc:
+            log.warning("block_op.persist_failed", job_id=job_id, error=str(exc))
+
+    return result.to_dict()
