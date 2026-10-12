@@ -26,7 +26,12 @@ from typing import Any
 import structlog
 from playwright.async_api import async_playwright
 
-from searchops.application.report_document import BlockKind, ReportBlock, ReportDocument
+from searchops.application.report_document import (
+    BlockKind,
+    ReportBlock,
+    ReportDocument,
+    _field,
+)
 
 log = structlog.get_logger(__name__)
 
@@ -225,18 +230,18 @@ def _render_sources(doc: ReportDocument) -> str:
 def _footnote(block: ReportBlock, doc: ReportDocument) -> str:
     if not block.claim_ids:
         return ""
-    by_id = {str(getattr(c, "id", "")): c for c in doc.claims}
+    by_id = {str(_field(c, "id", "")): c for c in doc.claims}
     lines: list[str] = []
     for cid in block.claim_ids:
         claim = by_id.get(cid)
         if claim is None:
             continue
-        text = str(getattr(claim, "text", "") or "").strip()
+        text = str(_field(claim, "text", "") or "").strip()
         if not text:
             continue
         url = ""
-        for citation in getattr(claim, "citations", None) or []:
-            url = str(getattr(citation, "url", "") or "")
+        for citation in _field(claim, "citations", None) or []:
+            url = str(_field(citation, "url", "") or "")
             if url.startswith("http"):
                 break
         lines.append(f"{text}{f'  [{url}]' if url else ''}")

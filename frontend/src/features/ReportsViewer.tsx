@@ -4,6 +4,7 @@ import remarkGfm from 'remark-gfm';
 import rehypeHighlight from 'rehype-highlight';
 import 'highlight.js/styles/github-dark.css';
 import { useExecutionStore } from '../shared/store/useExecutionStore';
+import { ReportInsights } from './ReportInsights';
 import { FileText, Download, Copy, Check, Search, BookOpen, X } from 'lucide-react';
 
 interface TocEntry {
@@ -195,12 +196,27 @@ export const ReportsViewer: React.FC = () => {
         )}
 
         {/* Report Content */}
+        <div className="flex-1 overflow-hidden flex">
         <div ref={contentRef} className="flex-1 overflow-y-auto p-6 max-w-4xl mx-auto w-full">
           <div className="border-b border-slate-800 pb-4 mb-6 select-none">
             <h1 className="text-xl font-bold text-slate-100 tracking-tight font-sans">{report.title}</h1>
-            <div className="flex items-center space-x-3 text-[10px] text-slate-500 font-mono mt-1">
-              <span>Deep Synthesis Ensemble v4.2</span>
-              <span>•</span>
+
+            {/* Honest provenance. When the report was synthesised from evidence
+                (model refusal / empty reply) the backend says so, and the user
+                must see it — otherwise a degraded report is indistinguishable
+                from one the model actually wrote. */}
+            {report.userMessage ? (
+              <div
+                role="status"
+                className="mt-2 border border-amber-500/30 bg-amber-500/5 rounded px-3 py-2"
+              >
+                <p className="text-[11px] text-amber-200 font-sans leading-relaxed">
+                  {report.userMessage}
+                </p>
+              </div>
+            ) : null}
+
+            <div className="flex items-center space-x-3 text-[10px] text-slate-500 font-mono mt-2">
               <span>{report.generatedAt}</span>
               <span>•</span>
               <span>{report.sourcesCount} sources</span>
@@ -216,6 +232,10 @@ export const ReportsViewer: React.FC = () => {
           >
             {filteredContent}
           </ReactMarkdown>
+        </div>
+
+        {/* Insights: coverage gaps, study guide, glossary, evidence check. */}
+        <ReportInsights jobId={report.id} enabled />
         </div>
       </div>
 

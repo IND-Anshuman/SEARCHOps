@@ -22,8 +22,8 @@ import {
   ResearchReport,
 } from '../types/workbench';
 
-const API_BASE = import.meta.env.VITE_API_BASE_URL ?? 'http://localhost:8000';
-const API_KEY = import.meta.env.VITE_API_KEY ?? '';
+export const API_BASE = import.meta.env.VITE_API_BASE_URL ?? 'http://localhost:8000';
+export const API_KEY = import.meta.env.VITE_API_KEY ?? '';
 
 if (!API_KEY && import.meta.env.DEV) {
   console.warn('[executionStore] VITE_API_KEY is not set. API requests will fail auth. Add it to frontend/.env.local');
@@ -197,6 +197,11 @@ export const executionStore = {
         sourcesCount: (data.source_count as number) ?? 0,
         entitiesCount: (data.entity_count as number) ?? 0,
         citations: (data.citations as string[]) ?? [],
+        // Honest provenance. When the report was synthesised from evidence
+        // (model refusal / empty reply) the UI must say so rather than showing
+        // it as a normal model report.
+        quality: (data.report_quality as string) ?? undefined,
+        userMessage: (data.report_user_message as string) ?? undefined,
       };
     }
 

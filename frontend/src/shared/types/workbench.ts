@@ -89,6 +89,49 @@ export interface ResearchReport {
   sourcesCount: number;
   entitiesCount: number;
   citations: string[];
+  /** Why the report looks the way it does: 'ok', 'refusal', 'raw_empty', ... */
+  quality?: string;
+  /** Plain-language explanation, shown only when quality !== 'ok'. */
+  userMessage?: string;
+}
+
+/** A coverage gap the run could not close — a real follow-up, not filler. */
+export interface EvidenceGap {
+  description: string;
+  targetQuery: string;
+  priority: number;
+}
+
+export interface TrustSummary {
+  total: number;
+  supported: number;
+  contested: number;
+  refuted: number;
+  unverified: number;
+  sources: number;
+  gaps: number;
+}
+
+export interface TrustReport {
+  summary: TrustSummary;
+  headline: string;
+}
+
+export interface GlossaryTerm {
+  term: string;
+  entityType: string;
+  definition: string;
+}
+
+export interface StudyQuestion {
+  question: string;
+  answer: string;
+  section: string;
+}
+
+export interface StudyGuide {
+  questions: StudyQuestion[];
+  note: string;
 }
 
 export interface AISuggestion {

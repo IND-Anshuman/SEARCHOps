@@ -281,8 +281,8 @@ class ReportDocument:
         if not self.claims:
             return
         for claim in self.claims:
-            claim_id = getattr(claim, "id", None)
-            text = (getattr(claim, "text", "") or "").strip()
+            claim_id = _field(claim, "id", None)
+            text = str(_field(claim, "text", "") or "").strip()
             if not claim_id or len(text) < _MIN_CLAIM_CHARS:
                 continue
             needle = _normalise(text[:_CLAIM_MATCH_CHARS])
@@ -433,6 +433,19 @@ def _short_hash(value: str) -> str:
 _STATUS_KEYS = ("supported", "contested", "refuted", "unverified")
 
 
+def _field(obj: Any, name: str, default: Any = None) -> Any:
+    """Read ``name`` from an object OR a dict.
+
+    Evidence crosses a Redis round-trip (``to_dict`` → ``from_dict``) where
+    pydantic models become plain dicts. Every consumer must handle both or it
+    silently reads nothing — which is how a "supported" claim gets reported as
+    "unverified", and a populated glossary comes back empty.
+    """
+    if isinstance(obj, dict):
+        return obj.get(name, default)
+    return getattr(obj, name, default)
+
+
 def trust_summary(doc: ReportDocument) -> dict[str, int]:
     """Count claims by verification status, plus totals for sources and gaps.
 
@@ -442,7 +455,7 @@ def trust_summary(doc: ReportDocument) -> dict[str, int]:
     summary: dict[str, int] = dict.fromkeys(_STATUS_KEYS, 0)
     summary["total"] = 0
     for claim in doc.claims:
-        status = str(getattr(claim, "status", "") or "unverified")
+        status = str(_field(claim, "status", "") or "unverified")
         summary["total"] += 1
         summary[status if status in summary else "unverified"] += 1
     summary["sources"] = sum(1 for b in doc.blocks if b.kind is BlockKind.SOURCE and not b.hidden)

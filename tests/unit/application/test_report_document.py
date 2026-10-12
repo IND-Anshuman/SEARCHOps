@@ -233,6 +233,44 @@ def test_trust_summary_counts_real_claim_statuses():
     assert s["refuted"] == 1
 
 
+def test_trust_summary_reads_claims_after_a_dict_round_trip():
+    """Regression: evidence crosses Redis as plain dicts.
+
+    trust_summary used getattr only, so after a round-trip every claim read as
+    "unverified" and a supported claim was reported as unsupported. The trust
+    header is the feature users judge the product by, so this had to be right.
+    """
+    claims = [
+        {"id": "c1", "text": "A", "status": "supported", "confidence": 0.9, "citations": []},
+        {"id": "c2", "text": "B", "status": "contested", "confidence": 0.7, "citations": []},
+    ]
+    doc = ReportDocument.from_markdown("j", "q", MD, claims=claims)
+    rebuilt = ReportDocument.from_dict(doc.to_dict())
+
+    assert all(isinstance(c, dict) for c in rebuilt.claims), "precondition"
+    s = trust_summary(rebuilt)
+    assert s["supported"] == 1
+    assert s["contested"] == 1
+    assert s["unverified"] == 0
+
+
+def test_glossary_reads_entities_after_a_dict_round_trip():
+    """Same trap on the entity side: a populated glossary came back empty."""
+    from searchops.application.exports.glossary import build_glossary
+
+    entities = [
+        {"name": "Surface code", "entity_type": "Concept", "description": "A 2D lattice code.", "confidence": 0.95},
+    ]
+    doc = ReportDocument.from_markdown("j", "q", MD, entities=entities)
+    rebuilt = ReportDocument.from_dict(doc.to_dict())
+
+    assert all(isinstance(e, dict) for e in rebuilt.entities), "precondition"
+    terms = build_glossary(rebuilt)
+    assert terms, "entities survived the round-trip, so a glossary must be produced"
+    assert terms[0].term == "Surface code"
+    assert terms[0].definition == "A 2D lattice code."
+
+
 def test_trust_headline_mentions_every_non_zero_status():
     claims = [
         _Claim("A", claim_id="c1", status="supported"),
