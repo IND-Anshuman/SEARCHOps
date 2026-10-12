@@ -26,10 +26,16 @@ import {
   ResearchReport,
 } from '../types/workbench';
 
+import type { ResearchConfig } from '../types/researchConfig';
+
 export type { ExecutionState };
 
 export interface ExecutionStoreHook extends ExecutionState {
-  startResearch: (query: string, depth: ResearchJob['depth']) => Promise<string>;
+  startResearch: (
+    query: string,
+    depth: ResearchJob['depth'],
+    config?: ResearchConfig,
+  ) => Promise<string>;
   loadJob: (jobId: string) => Promise<void>;
 }
 
@@ -42,10 +48,10 @@ export function useExecutionStore(): ExecutionStoreHook {
   return {
     ...state,
 
-    startResearch: async (query: string, depth: ResearchJob['depth']): Promise<string> => {
+    startResearch: async (query: string, depth: ResearchJob['depth'], config?: ResearchConfig): Promise<string> => {
       executionStore.setConnectionStatus('connecting');
       try {
-        const jobId = await executionStore.startResearch(query, depth);
+        const jobId = await executionStore.startResearch(query, depth, config);
         executionStore.reset(jobId, query, depth);
         connect(jobId);
         return jobId;

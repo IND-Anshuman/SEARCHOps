@@ -56,6 +56,9 @@ def test_start_research_returns_202():
         depth="standard",
         max_sources=5,
         mode="precision",
+        # config=None means "use mode defaults" — scraping configuration is
+        # user-tunable now, and omitting it keeps the previous behaviour.
+        config=None,
     )
 
 
@@ -323,6 +326,7 @@ def test_start_research_accepts_corpus_mode() -> None:
         depth="deep",
         max_sources=40,
         mode="corpus",
+        config=None,
     )
 
 
@@ -339,4 +343,63 @@ def test_start_research_rejects_unknown_mode() -> None:
 
     assert resp.status_code == 422
     # The service was never invoked — no job was created for a bogus mode.
+    mock_svc.start_research.assert_not_called()
+
+
+@pytest.mark.unit
+def test_start_research_forwards_user_config():
+    """A knob that validates but is dropped is a lie in the UI."""
+    from searchops.core.context.research import ResearchConfig
+
+    mock_svc = AsyncMock(spec=ResearchApplicationService)
+    mock_svc.start_research.return_value = "job-cfg-1"
+
+    client = TestClient(_build_test_app(mock_svc))
+    resp = client.post(
+        "/api/v1/research/",
+        json={
+            "query": "quantum error correction",
+            "config": {"max_pages": 25, "max_depth": 2, "verify_sampling_rate": 0.5},
+        },
+    )
+
+    assert resp.status_code == 202
+    passed = mock_svc.start_research.call_args.kwargs["config"]
+    assert isinstance(passed, ResearchConfig)
+    assert passed.max_pages == 25
+    assert passed.max_depth == 2
+    assert passed.verify_sampling_rate == 0.5
+
+
+@pytest.mark.unit
+def test_start_research_rejects_an_inconsistent_config():
+    """More pages than the scrape budget allows is refused, not silently truncated."""
+    mock_svc = AsyncMock(spec=ResearchApplicationService)
+    client = TestClient(_build_test_app(mock_svc), raise_server_exceptions=False)
+
+    resp = client.post(
+        "/api/v1/research/",
+        json={
+            "query": "quantum error correction",
+            "config": {"max_pages": 100, "scrape_budget": 5},
+        },
+    )
+
+    assert resp.status_code == 422
+    detail = str(resp.json())
+    assert "scrape_budget" in detail
+    mock_svc.start_research.assert_not_called()
+
+
+@pytest.mark.unit
+def test_start_research_rejects_out_of_bounds_config():
+    mock_svc = AsyncMock(spec=ResearchApplicationService)
+    client = TestClient(_build_test_app(mock_svc), raise_server_exceptions=False)
+
+    resp = client.post(
+        "/api/v1/research/",
+        json={"query": "quantum error correction", "config": {"max_pages": 999_999}},
+    )
+
+    assert resp.status_code == 422
     mock_svc.start_research.assert_not_called()

@@ -11,8 +11,15 @@ import {
   Database
 } from 'lucide-react';
 
+import {
+  DEFAULT_CONFIG,
+  type ResearchConfig,
+} from '../shared/types/researchConfig';
+import { ResearchConfigPanel } from './ResearchConfigPanel';
+
 export const AIChatWorkspace: React.FC = () => {
   const { job, logs, startResearch } = useExecutionStore();
+  const [config, setConfig] = useState<ResearchConfig>(DEFAULT_CONFIG);
   const { setActiveView } = useWorkbenchStore();
   
   const [topicInput, setTopicInput] = useState('');
@@ -23,7 +30,7 @@ export const AIChatWorkspace: React.FC = () => {
     if (!topicInput.trim() || submitting) return;
     setSubmitting(true);
     try {
-      await startResearch(topicInput, depth);
+      await startResearch(topicInput, depth, config);
       // Automatically switch to live execution graph on trigger
       setActiveView('execution');
     } catch (e) {
@@ -87,7 +94,7 @@ export const AIChatWorkspace: React.FC = () => {
           </div>
 
           {/* Start button */}
-          <button 
+          <button
             onClick={handleStartResearch}
             className="bg-emerald-500 hover:bg-emerald-600 text-slate-950 font-bold px-4 py-2 rounded flex items-center space-x-1.5 transition shrink-0 cursor-pointer text-sm font-sans"
             disabled={job.status === 'running' || submitting || !topicInput.trim()}
@@ -95,6 +102,11 @@ export const AIChatWorkspace: React.FC = () => {
             <Play className="w-4 h-4 fill-current" />
             <span>{submitting ? 'DISPATCHING...' : 'RUN RESEARCH'}</span>
           </button>
+        </div>
+
+        {/* Advanced scraping configuration — bounded, with a cost estimate. */}
+        <div className="mt-2">
+          <ResearchConfigPanel value={config} onChange={setConfig} />
         </div>
       </div>
 

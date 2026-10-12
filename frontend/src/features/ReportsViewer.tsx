@@ -10,7 +10,7 @@ import {
   type ReportDocumentData,
 } from './BlockEditor';
 import { API_BASE, API_KEY } from '../shared/store/executionStore';
-import { FileText, Download, Copy, Check, Search, BookOpen, X } from 'lucide-react';
+import { FileText, Download, Copy, Check, Search, BookOpen, X, FileDown, Loader2 } from 'lucide-react';
 
 interface TocEntry {
   text: string;
@@ -41,6 +41,24 @@ function buildToc(markdown: string): TocEntry[] {
   return entries;
 }
 
+const ExportBtn: React.FC<{
+  label: string;
+  fmt: string;
+  busy: boolean;
+  onClick: () => void;
+}> = ({ label, busy, onClick }) => (
+  <button
+    type="button"
+    onClick={onClick}
+    disabled={busy}
+    title={`Download as ${label}`}
+    className="bg-slate-950 hover:bg-slate-850 border border-slate-800 text-slate-300 px-2.5 py-1 rounded font-bold transition flex items-center gap-1 text-[10px] disabled:opacity-50"
+  >
+    {busy ? <Loader2 className="w-3 h-3 animate-spin" /> : <FileDown className="w-3 h-3" />}
+    <span>{label}</span>
+  </button>
+);
+
 export const ReportsViewer: React.FC = () => {
   const { report } = useExecutionStore();
   const [copied, setCopied] = useState(false);
@@ -52,6 +70,8 @@ export const ReportsViewer: React.FC = () => {
   // fetched; while absent we fall back to rendering the plain markdown so the
   // report is never blocked on it.
   const [blockDoc, setBlockDoc] = useState<ReportDocumentData | null>(null);
+  const [exporting, setExporting] = useState<'deck' | 'docx' | 'pdf' | null>(null);
+  const [exportError, setExportError] = useState<string>('');
 
   // Fetch the block document so the report can be edited. A failed fetch is
   // not fatal: the plain markdown still renders.
@@ -100,6 +120,42 @@ export const ReportsViewer: React.FC = () => {
     document.body.removeChild(a);
     URL.revokeObjectURL(url);
   }, [report]);
+
+  // Deck / Word / PDF are produced server-side so the claim→source binding
+  // travels with the artifact. A failed export must surface, never silently
+  // fall back to the plain-text download — the user would send a .md believing
+  // it was a deck.
+  const handleExport = useCallback(
+    async (format: 'deck' | 'docx' | 'pdf') => {
+      if (!report) return;
+      setExporting(format);
+      setExportError('');
+      try {
+        const res = await fetch(`${API_BASE}/api/v1/research/${report.id}/export/${format}`, {
+          headers: { ...(API_KEY ? { 'X-API-Key': API_KEY } : {}) },
+        });
+        if (!res.ok) {
+          const detail = (await res.json().catch(() => null)) as { detail?: string } | null;
+          setExportError(detail?.detail ?? `${format.toUpperCase()} export failed (HTTP ${res.status}).`);
+          return;
+        }
+        const blob = await res.blob();
+        const url = URL.createObjectURL(blob);
+        const a = document.createElement('a');
+        a.href = url;
+        a.download = `${report.title.toLowerCase().replace(/[^a-z0-9]+/g, '_')}_report.${format}`;
+        document.body.appendChild(a);
+        a.click();
+        document.body.removeChild(a);
+        URL.revokeObjectURL(url);
+      } catch {
+        setExportError(`Could not reach the server for the ${format.toUpperCase()} export.`);
+      } finally {
+        setExporting(null);
+      }
+    },
+    [report],
+  );
 
   const scrollToHeading = useCallback((slug: string) => {
     const el = contentRef.current?.querySelector(`#${CSS.escape(slug)}`);
@@ -196,10 +252,21 @@ export const ReportsViewer: React.FC = () => {
             </button>
             <button onClick={handleDownload} className="bg-slate-950 hover:bg-slate-850 border border-slate-800 text-slate-300 px-2.5 py-1 rounded font-bold transition flex items-center space-x-1 text-[10px]">
               <Download className="w-3.5 h-3.5" />
-              <span>DOWNLOAD</span>
+              <span>MARKDOWN</span>
             </button>
+            <span className="w-px h-4 bg-slate-800" />
+            <ExportBtn label="PPTX" fmt="deck" busy={exporting === 'deck'} onClick={() => void handleExport('deck')} />
+            <ExportBtn label="DOCX" fmt="docx" busy={exporting === 'docx'} onClick={() => void handleExport('docx')} />
+            <ExportBtn label="PDF" fmt="pdf" busy={exporting === 'pdf'} onClick={() => void handleExport('pdf')} />
           </div>
         </div>
+
+        {exportError ? (
+          <div role="status" className="bg-slate-950 border-b border-red-500/30 px-4 py-2 text-[11px] text-red-300 font-sans">
+            {exportError}
+            <button type="button" onClick={() => setExportError('')} className="ml-2 text-red-400/70 hover:text-red-200" aria-label="Dismiss">×</button>
+          </div>
+        ) : null}
 
         {/* Search bar (collapsible) */}
         {searchVisible && (

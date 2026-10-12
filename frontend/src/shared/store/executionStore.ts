@@ -21,6 +21,7 @@ import {
   RedisEventLog,
   ResearchReport,
 } from '../types/workbench';
+import type { ResearchConfig } from '../types/researchConfig';
 
 export const API_BASE = import.meta.env.VITE_API_BASE_URL ?? 'http://localhost:8000';
 export const API_KEY = import.meta.env.VITE_API_KEY ?? '';
@@ -230,17 +231,40 @@ export const executionStore = {
   },
 
   // ── API actions ────────────────────────────────────────────────────────
-  async startResearch(query: string, depth: ResearchJob['depth']): Promise<string> {
+  async startResearch(
+    query: string,
+    depth: ResearchJob['depth'],
+    config?: ResearchConfig,
+  ): Promise<string> {
     let mappedDepth: 'shallow' | 'standard' | 'deep' = 'standard';
     if (depth === 'quick') mappedDepth = 'shallow';
     else if (depth === 'exhaustive' || depth === 'deep') mappedDepth = 'deep';
 
+    // The config travels as snake_case — the API schema is the contract.
+    const body: Record<string, unknown> = { query, depth: mappedDepth, max_sources: 10 };
+    if (config) {
+      body.config = {
+        max_pages: config.maxPages,
+        max_depth: config.maxDepth,
+        max_content_chars: config.maxContentChars,
+        verify_sampling_rate: config.verifySamplingRate,
+        max_report_sections: config.maxReportSections,
+        scrape_budget: config.scrapeBudget,
+      };
+    }
+
     const resp = await fetch(`${API_BASE}/api/v1/research/`, {
       method: 'POST',
       headers: authHeaders(),
-      body: JSON.stringify({ query, depth: mappedDepth, max_sources: 10 }),
+      body: JSON.stringify(body),
     });
-    if (!resp.ok) throw new Error(`HTTP ${resp.status} starting research`);
+    if (!resp.ok) {
+      // The server explains WHY a config was refused (usually pages > budget).
+      // Surface that rather than a bare status code, or the user cannot fix it.
+      const detail = await resp.json().catch(() => null) as { detail?: unknown } | null;
+      const msg = typeof detail?.detail === 'string' ? detail.detail : `HTTP ${resp.status} starting research`;
+      throw new Error(msg);
+    }
 
     const data = await resp.json() as { job_id: string };
     const jobId = data.job_id;

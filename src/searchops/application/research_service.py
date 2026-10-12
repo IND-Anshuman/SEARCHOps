@@ -31,7 +31,7 @@ import structlog
 
 from searchops.application.report_document import ReportDocument
 from searchops.core.context.execution import ExecutionContext
-from searchops.core.context.research import ResearchDepth, ScrapePlan
+from searchops.core.context.research import ResearchConfig, ResearchDepth, ScrapePlan
 from searchops.knowledge.extractor import EntityExtractor
 from searchops.llm.router import LLMRouter
 from searchops.orchestration.graphs.deep_research import (
@@ -107,6 +107,7 @@ class ResearchApplicationService:
         depth: str = "standard",
         max_sources: int = 10,
         mode: str = "precision",
+        config: ResearchConfig | None = None,
         context: ExecutionContext | None = None,
     ) -> str:
         """Create a research job and schedule async execution. Returns job_id.
@@ -114,6 +115,11 @@ class ResearchApplicationService:
         ``mode`` selects the run shape (precision | corpus). Its resolved
         :class:`ScrapePlan` is stored on the job so every downstream stage can
         read its own parameters instead of re-deriving the mode.
+
+        ``config`` is the user's tuning. When supplied it overrides the plan's
+        breadth and depth; the plan's other fields (relevance filter,
+        verification sampling, report shape) stay mode-owned because they are
+        structural choices, not knobs a user should have to reason about.
         """
         job_id = str(uuid.uuid4())
         exec_ctx = context or ExecutionContext.create()
@@ -122,6 +128,14 @@ class ResearchApplicationService:
         # job that quietly ran as precision when corpus was asked for is worse
         # than a clear 422.
         plan = ScrapePlan.for_mode(mode, max_sources=max_sources)
+        if config is not None:
+            plan = plan.model_copy(
+                update={
+                    "max_pages": config.max_pages,
+                    "max_depth": config.max_depth,
+                    "verify_sampling_rate": config.verify_sampling_rate,
+                }
+            )
 
         initial_state: dict[str, Any] = {
             "job_id": job_id,

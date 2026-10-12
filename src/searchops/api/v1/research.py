@@ -23,14 +23,14 @@ from typing import Any
 import structlog
 from fastapi import APIRouter, Depends, HTTPException, Request, status
 from fastapi.responses import FileResponse
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, field_validator
 
 from searchops.application.exports.deck import export_deck
 from searchops.application.exports.docx_export import export_docx
 from searchops.application.exports.pdf_export import ExportUnavailableError, export_pdf
 from searchops.application.report_document import ReportDocument
 from searchops.application.research_service import ResearchApplicationService, ResearchJobStatus
-from searchops.core.context.research import ResearchMode
+from searchops.core.context.research import ResearchConfig, ResearchMode
 
 log = structlog.get_logger(__name__)
 
@@ -48,6 +48,24 @@ class StartResearchRequest(BaseModel):
         description="precision (answer one question well) | corpus (build a dataset)",
     )
     max_sources: int = Field(default=10, ge=1, le=50)
+    # User-tunable scraping configuration. Every field carries a hard bound, so
+    # a request cannot ask for an unbounded crawl. An inconsistent plan (more
+    # pages than the scrape budget allows) is rejected here rather than
+    # silently truncated at run time.
+    config: ResearchConfig | None = Field(
+        default=None,
+        description="Optional scraping/verification tuning. Omit for mode defaults.",
+    )
+
+    @field_validator("config")
+    @classmethod
+    def _config_must_be_consistent(cls, v: ResearchConfig | None) -> ResearchConfig | None:
+        if v is None:
+            return None
+        problems = v.validate_against_budget()
+        if problems:
+            raise ValueError(" ".join(problems))
+        return v
 
 
 class StartResearchResponse(BaseModel):
@@ -258,6 +276,7 @@ async def start_research(
         depth=payload.depth,
         max_sources=payload.max_sources,
         mode=payload.mode,
+        config=payload.config,
     )
     return StartResearchResponse(
         job_id=job_id,

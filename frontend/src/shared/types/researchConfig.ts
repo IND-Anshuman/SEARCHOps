@@ -1,0 +1,45 @@
+/** Mirrors searchops.core.context.research.ResearchConfig, bounds included. */
+export interface ResearchConfig {
+  maxPages: number;
+  maxDepth: number;
+  maxContentChars: number;
+  verifySamplingRate: number;
+  maxReportSections: number;
+  scrapeBudget: number;
+}
+
+/** Hard bounds, mirrored from the server schema. The server re-validates. */
+export const CONFIG_BOUNDS = {
+  maxPages: { min: 1, max: 200, step: 1, label: 'Pages to fetch', hint: 'How many pages this run may read.' },
+  maxDepth: { min: 1, max: 10, step: 1, label: 'Link depth', hint: '1 = only the pages found in search. Higher follows links.' },
+  maxContentChars: { min: 1_000, max: 2_000_000, step: 10_000, label: 'Content budget (chars)', hint: 'Total page text this run will keep.' },
+  verifySamplingRate: { min: 0.1, max: 1.0, step: 0.05, label: 'Claim verification', hint: 'Share of claims checked against sources. Lower is cheaper but leaves claims unverified.' },
+  maxReportSections: { min: 1, max: 60, step: 1, label: 'Report sections', hint: 'Maximum sections in the finished report.' },
+  scrapeBudget: { min: 1, max: 200, step: 1, label: 'Scrape budget', hint: 'Must be at least the page count, or the run is refused.' },
+} as const;
+
+export const DEFAULT_CONFIG: ResearchConfig = {
+  maxPages: 10,
+  maxDepth: 1,
+  maxContentChars: 200_000,
+  verifySamplingRate: 1.0,
+  maxReportSections: 12,
+  scrapeBudget: 10,
+};
+
+/** Cross-field checks, mirrored from ResearchConfig.validate_against_budget. */
+export function validateConfig(cfg: ResearchConfig): string[] {
+  const problems: string[] = [];
+  if (cfg.maxPages > cfg.scrapeBudget) {
+    problems.push(
+      `Asking for ${cfg.maxPages} pages but the scrape budget only allows ${cfg.scrapeBudget}. Raise the budget or lower the page count.`,
+    );
+  }
+  return problems;
+}
+
+/** Rough estimate. Labelled as an estimate in the UI, never as measured. */
+export function estimateCost(cfg: ResearchConfig): number {
+  const perPage = 0.002 + (cfg.maxDepth - 1) * 0.001;
+  return cfg.maxPages * perPage;
+}
