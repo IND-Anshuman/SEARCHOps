@@ -2,8 +2,8 @@
 
 from __future__ import annotations
 
+from pydantic import Field, SecretStr, field_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
-from pydantic import Field, field_validator, SecretStr
 
 
 class SearchSettings(BaseSettings):
@@ -22,7 +22,11 @@ class SearchSettings(BaseSettings):
     cache_ttl: int = 900
     searxng_base_url: str = Field(default="http://localhost:8080", alias="SEARXNG_BASE_URL")
     searxng_verify_ssl: bool = Field(default=True, alias="SEARXNG_VERIFY_SSL")
-    playwright_search_engine: str = Field(default="duckduckgo", alias="PLAYWRIGHT_SEARCH_ENGINE")
+    #: Engine the key-free Playwright provider scrapes. Default is ``bing``:
+    #: ``duckduckgo`` serves anti-bot challenge pages to headless browsers
+    #: (verified: HTTP 202, zero result elements), while bing returns real
+    #: results and its redirect URLs decode cleanly.
+    playwright_search_engine: str = Field(default="bing", alias="PLAYWRIGHT_SEARCH_ENGINE")
 
     # ── PAA (People Also Ask) governance ────────────────────────────────────
     max_paa_depth: int = Field(
@@ -44,8 +48,18 @@ class SearchSettings(BaseSettings):
     @field_validator("default_provider")
     @classmethod
     def validate_default_provider(cls, v: str) -> str:
-        if v not in {"tavily", "serper", "brave", "bing", "searxng", "playwright", "brightdata_serp"}:
-            raise ValueError("default_provider must be one of: tavily, serper, brave, bing, searxng, playwright, brightdata_serp")
+        if v not in {
+            "tavily",
+            "serper",
+            "brave",
+            "bing",
+            "searxng",
+            "playwright",
+            "brightdata_serp",
+        }:
+            raise ValueError(
+                "default_provider must be one of: tavily, serper, brave, bing, searxng, playwright, brightdata_serp"
+            )
         return v
 
     @field_validator("max_results_per_query")

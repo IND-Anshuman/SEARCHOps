@@ -6,7 +6,6 @@ from __future__ import annotations
 
 import httpx
 import structlog
-from typing import Any
 
 from searchops.config.settings import Settings, get_settings
 from searchops.search.contracts import ISearchProvider, SearchQuery, SearchResultItem
@@ -24,14 +23,22 @@ class SearXNGSearchProvider(ISearchProvider):
         self.base_url = self.settings.searxng_base_url.rstrip("/")
         self.verify_ssl = self.settings.searxng_verify_ssl
 
+    #: SearXNG is self-hosted — it runs with no external API key.
+    requires_credentials = False
+
     @property
     def name(self) -> str:
         return "searxng"
 
     @property
     def capabilities(self) -> set[SearchCapability]:
+        # Includes SEMANTIC so SearXNG is eligible for the DEEP profile
+        # (semantic + keyword + metadata). It aggregates general web results,
+        # which is a keyword+semantic index in practice; the narrower original
+        # declaration excluded it from deep queries entirely.
         return {
             SearchCapability.KEYWORD,
+            SearchCapability.SEMANTIC,
             SearchCapability.NEWS,
             SearchCapability.METADATA,
         }
@@ -42,16 +49,12 @@ class SearXNGSearchProvider(ISearchProvider):
 
     async def search(self, query: SearchQuery) -> list[SearchResultItem]:
         """Perform search query via SearXNG JSON API."""
-        clean_query = query.query.replace('"', '').strip()
+        clean_query = query.query.replace('"', "").strip()
         if not clean_query:
             return []
 
         url = f"{self.base_url}/"
-        params = {
-            "q": clean_query,
-            "format": "json",
-            "pageno": 1
-        }
+        params: dict[str, str | int] = {"q": clean_query, "format": "json", "pageno": 1}
 
         try:
             async with httpx.AsyncClient(timeout=self.settings.search_timeout, verify=self.verify_ssl) as client:

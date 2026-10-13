@@ -1,0 +1,33 @@
+# SearXNG configuration for SEARCHOps self-hosted instance.
+# Enables the JSON API so the app can call format=json without hitting the
+# browser-verification wall that public instances put in front of it.
+
+use_default_settings: true
+
+general:
+  instance_name: "SEARCHOps Search"
+  debug: false
+
+search:
+  # JSON output is what the SearXNGSearchProvider consumes.
+  formats:
+    - html
+    - json
+  # Return a healthy number of results per page so the app's max_results maps
+  # to real content rather than a near-empty first page.
+  safe_search: 0
+
+server:
+  # Bind inside the container; the port is published to the host.
+  bind_address: "0.0.0.0"
+  port: 8080
+  secret_key: "searchops_dev_searxng_key"
+  # The limiter is the main source of 429s on a local instance; disable it.
+  limiter: false
+  public_instance: false
+
+ui:
+  static_use_hash: true
+
+# Disable the bot-detection that returns a challenge page to the app client.
+# This is a trusted local instance, so it is unnecessary here.

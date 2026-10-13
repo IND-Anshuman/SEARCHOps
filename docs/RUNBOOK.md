@@ -76,15 +76,34 @@ reordering decisions are visible in `GET /api/v1/.../stats` under
 
 ## 4. Search provider failures
 
-Routing is **key-free-first**: SearXNG and the internal Playwright browser are
-tried before any credential-dependent provider. A broken API key therefore
-degrades quality — it does not break the platform.
+Routing is **capability + priority based**, with key-free providers as the
+**fallback**. For a DEEP query the provider that satisfies
+`{semantic, keyword, metadata}` runs first; if it returns nothing, the
+key-free path (SearXNG, then the Playwright browser) is tried. A broken paid
+key degrades quality — it does not break the platform, because the free path
+still resolves. (Verified call order for a deep query:
+`brightdata_serp → playwright → searxng`.)
+
+**The key-free path needs both engines reachable:**
+
+- **SearXNG** is a `docker-compose` service (`searxng`, port 8080). It is not
+  an external API — start it with `make docker-up`. Its `config/searxng/
+  settings.yml` enables the JSON API and disables the limiter. Public SearXNG
+  instances will **not** work: they wall `format=json` behind a
+  browser-verification challenge.
+- **Playwright browser** scrapes Bing by default
+  (`PLAYWRIGHT_SEARCH_ENGINE=bing`). DuckDuckGo is deliberately *not* the
+  default: `html.duckduckgo.com` and `lite.duckduckgo.com` serve anti-bot
+  challenge pages to headless browsers (HTTP 202, zero result elements). Bing
+  returns real results; its `bing.com/ck/a` redirect URLs are decoded to the
+  true target before the result leaves the provider.
 
 | Symptom | Cause | Action |
 |---|---|---|
 | Poor result quality, everything still completes | Paid providers failing, key-free fallback succeeding. | Check `make check-env` for missing/invalid keys. |
 | `Unknown zone` from BrightData SERP | The configured zone name does not exist. | Fix `BRIGHTDATA_API_KEY` / zone, or unset it to rely on the key-free path. |
-| Nothing resolves at all | Both SearXNG and Playwright are unreachable. | `curl $SEARXNG_BASE_URL/search?q=test&format=json` to test SearXNG directly. |
+| Nothing resolves at all | SearXNG not running **and** Playwright engine blocked. | `curl http://localhost:8080/search?q=test&format=json` to test SearXNG; confirm `make docker-up` brought it up. |
+| Browser search logs "no result containers" | The configured engine served a challenge page (e.g. DuckDuckGo from a datacenter IP). | Set `PLAYWRIGHT_SEARCH_ENGINE=bing`. |
 
 ---
 
