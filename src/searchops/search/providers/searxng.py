@@ -25,6 +25,7 @@ class SearXNGSearchProvider(ISearchProvider):
 
     #: SearXNG is self-hosted — it runs with no external API key.
     requires_credentials = False
+    priority = 90
 
     @property
     def name(self) -> str:
