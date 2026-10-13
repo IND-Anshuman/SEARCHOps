@@ -13,60 +13,74 @@ Sources (as of July 2026):
 
 from __future__ import annotations
 
+from typing import TYPE_CHECKING
+
 import structlog
 
-from searchops.core.context.execution import ExecutionContext
 from searchops.core.exceptions.application import BudgetExceededError
+
+if TYPE_CHECKING:
+    from searchops.core.context.execution import ExecutionContext
 
 log = structlog.get_logger(__name__)
 
 # Cost per single token in USD  (price_per_1M / 1_000_000)
 _MODEL_COST_TABLE: dict[str, dict[str, float]] = {
     # ── OpenAI ─────────────────────────────────────────────────────────────
-    "gpt-4o":                       {"prompt": 2.50 / 1_000_000, "completion": 10.00 / 1_000_000},
-    "gpt-4o-mini":                  {"prompt": 0.15 / 1_000_000, "completion":  0.60 / 1_000_000},
-    "gpt-4.1":                      {"prompt": 2.00 / 1_000_000, "completion":  8.00 / 1_000_000},
-    "gpt-4.1-mini":                 {"prompt": 0.40 / 1_000_000, "completion":  1.60 / 1_000_000},
-    "o1":                           {"prompt": 15.00 / 1_000_000, "completion": 60.00 / 1_000_000},
-    "o1-mini":                      {"prompt": 1.10 / 1_000_000, "completion":  4.40 / 1_000_000},
-    "o3":                           {"prompt": 10.00 / 1_000_000, "completion": 40.00 / 1_000_000},
-    "o3-mini":                      {"prompt": 1.10 / 1_000_000, "completion":  4.40 / 1_000_000},
-    "o4-mini":                      {"prompt": 1.10 / 1_000_000, "completion":  4.40 / 1_000_000},
-
+    "gpt-4o": {"prompt": 2.50 / 1_000_000, "completion": 10.00 / 1_000_000},
+    "gpt-4o-mini": {"prompt": 0.15 / 1_000_000, "completion": 0.60 / 1_000_000},
+    "gpt-4.1": {"prompt": 2.00 / 1_000_000, "completion": 8.00 / 1_000_000},
+    "gpt-4.1-mini": {"prompt": 0.40 / 1_000_000, "completion": 1.60 / 1_000_000},
+    "o1": {"prompt": 15.00 / 1_000_000, "completion": 60.00 / 1_000_000},
+    "o1-mini": {"prompt": 1.10 / 1_000_000, "completion": 4.40 / 1_000_000},
+    "o3": {"prompt": 10.00 / 1_000_000, "completion": 40.00 / 1_000_000},
+    "o3-mini": {"prompt": 1.10 / 1_000_000, "completion": 4.40 / 1_000_000},
+    "o4-mini": {"prompt": 1.10 / 1_000_000, "completion": 4.40 / 1_000_000},
     # ── Anthropic ──────────────────────────────────────────────────────────
-    "claude-opus-4-5":              {"prompt": 15.00 / 1_000_000, "completion": 75.00 / 1_000_000},
-    "claude-sonnet-4-5":            {"prompt":  3.00 / 1_000_000, "completion": 15.00 / 1_000_000},
-    "claude-haiku-4-5":             {"prompt":  0.80 / 1_000_000, "completion":  4.00 / 1_000_000},
-    "claude-3-5-sonnet-20241022":   {"prompt":  3.00 / 1_000_000, "completion": 15.00 / 1_000_000},
-    "claude-3-5-haiku-20241022":    {"prompt":  0.80 / 1_000_000, "completion":  4.00 / 1_000_000},
-    "claude-3-opus-20240229":       {"prompt": 15.00 / 1_000_000, "completion": 75.00 / 1_000_000},
-
+    "claude-opus-4-5": {"prompt": 15.00 / 1_000_000, "completion": 75.00 / 1_000_000},
+    "claude-sonnet-4-5": {"prompt": 3.00 / 1_000_000, "completion": 15.00 / 1_000_000},
+    "claude-haiku-4-5": {"prompt": 0.80 / 1_000_000, "completion": 4.00 / 1_000_000},
+    "claude-3-5-sonnet-20241022": {"prompt": 3.00 / 1_000_000, "completion": 15.00 / 1_000_000},
+    "claude-3-5-haiku-20241022": {"prompt": 0.80 / 1_000_000, "completion": 4.00 / 1_000_000},
+    "claude-3-opus-20240229": {"prompt": 15.00 / 1_000_000, "completion": 75.00 / 1_000_000},
     # ── Google AI Studio / Vertex (Gemini) ─────────────────────────────────
-    "gemini-2.5-pro":               {"prompt":  1.25 / 1_000_000, "completion": 10.00 / 1_000_000},
-    "gemini-2.5-flash":             {"prompt":  0.30 / 1_000_000, "completion":  2.50 / 1_000_000},
-    "gemini-2.5-flash-lite":        {"prompt":  0.10 / 1_000_000, "completion":  0.40 / 1_000_000},
-    "gemini-2.0-flash":             {"prompt":  0.10 / 1_000_000, "completion":  0.40 / 1_000_000},
-    "gemini-1.5-pro":               {"prompt":  1.25 / 1_000_000, "completion":  5.00 / 1_000_000},
-    "gemini-1.5-flash":             {"prompt":  0.075 / 1_000_000, "completion": 0.30 / 1_000_000},
-
+    "gemini-2.5-pro": {"prompt": 1.25 / 1_000_000, "completion": 10.00 / 1_000_000},
+    "gemini-2.5-flash": {"prompt": 0.30 / 1_000_000, "completion": 2.50 / 1_000_000},
+    "gemini-2.5-flash-lite": {"prompt": 0.10 / 1_000_000, "completion": 0.40 / 1_000_000},
+    "gemini-2.0-flash": {"prompt": 0.10 / 1_000_000, "completion": 0.40 / 1_000_000},
+    "gemini-1.5-pro": {"prompt": 1.25 / 1_000_000, "completion": 5.00 / 1_000_000},
+    "gemini-1.5-flash": {"prompt": 0.075 / 1_000_000, "completion": 0.30 / 1_000_000},
     # ── NVIDIA NIM ─────────────────────────────────────────────────────────
-    "nvidia/llama-3.1-nemotron-ultra-253b-v1": {"prompt": 4.50 / 1_000_000, "completion": 18.00 / 1_000_000},
-    "nvidia/llama-3.3-nemotron-super-49b-v1":  {"prompt": 0.70 / 1_000_000, "completion":  2.80 / 1_000_000},
-    "nvidia/llama-3.1-70b-instruct":           {"prompt": 0.35 / 1_000_000, "completion":  0.40 / 1_000_000},
-    "nvidia/mistral-nemo-12b-instruct":        {"prompt": 0.15 / 1_000_000, "completion":  0.15 / 1_000_000},
-
+    "nvidia/llama-3.1-nemotron-ultra-253b-v1": {
+        "prompt": 4.50 / 1_000_000,
+        "completion": 18.00 / 1_000_000,
+    },
+    "nvidia/llama-3.3-nemotron-super-49b-v1": {
+        "prompt": 0.70 / 1_000_000,
+        "completion": 2.80 / 1_000_000,
+    },
+    "nvidia/llama-3.1-70b-instruct": {"prompt": 0.35 / 1_000_000, "completion": 0.40 / 1_000_000},
+    "nvidia/mistral-nemo-12b-instruct": {
+        "prompt": 0.15 / 1_000_000,
+        "completion": 0.15 / 1_000_000,
+    },
     # ── Amazon Bedrock ─────────────────────────────────────────────────────
-    "anthropic.claude-3-5-sonnet-20241022-v2:0": {"prompt": 3.00 / 1_000_000, "completion": 15.00 / 1_000_000},
-    "anthropic.claude-3-haiku-20240307-v1:0":    {"prompt": 0.25 / 1_000_000, "completion":  1.25 / 1_000_000},
-    "amazon.nova-pro-v1:0":                      {"prompt": 0.80 / 1_000_000, "completion":  3.20 / 1_000_000},
-    "amazon.nova-lite-v1:0":                     {"prompt": 0.06 / 1_000_000, "completion":  0.24 / 1_000_000},
-    "meta.llama3-70b-instruct-v1:0":             {"prompt": 0.99 / 1_000_000, "completion":  0.99 / 1_000_000},
-
+    "anthropic.claude-3-5-sonnet-20241022-v2:0": {
+        "prompt": 3.00 / 1_000_000,
+        "completion": 15.00 / 1_000_000,
+    },
+    "anthropic.claude-3-haiku-20240307-v1:0": {
+        "prompt": 0.25 / 1_000_000,
+        "completion": 1.25 / 1_000_000,
+    },
+    "amazon.nova-pro-v1:0": {"prompt": 0.80 / 1_000_000, "completion": 3.20 / 1_000_000},
+    "amazon.nova-lite-v1:0": {"prompt": 0.06 / 1_000_000, "completion": 0.24 / 1_000_000},
+    "meta.llama3-70b-instruct-v1:0": {"prompt": 0.99 / 1_000_000, "completion": 0.99 / 1_000_000},
     # ── Zhipu AI / Z.AI (GLM) ─────────────────────────────────────────────
-    "glm-4-plus":                   {"prompt": 0.14 / 1_000_000, "completion": 0.14 / 1_000_000},
-    "glm-4-air":                    {"prompt": 0.014 / 1_000_000, "completion": 0.014 / 1_000_000},
-    "glm-4-flash":                  {"prompt": 0.0 / 1_000_000, "completion": 0.0 / 1_000_000},  # free tier
-    "glm-4v-plus":                  {"prompt": 0.14 / 1_000_000, "completion": 0.14 / 1_000_000},
+    "glm-4-plus": {"prompt": 0.14 / 1_000_000, "completion": 0.14 / 1_000_000},
+    "glm-4-air": {"prompt": 0.014 / 1_000_000, "completion": 0.014 / 1_000_000},
+    "glm-4-flash": {"prompt": 0.0 / 1_000_000, "completion": 0.0 / 1_000_000},  # free tier
+    "glm-4v-plus": {"prompt": 0.14 / 1_000_000, "completion": 0.14 / 1_000_000},
 }
 
 # Fallback for unknown models — assume mid-range pricing

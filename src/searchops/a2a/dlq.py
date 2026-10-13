@@ -7,11 +7,12 @@ for inspection and administrative redelivery.
 
 from __future__ import annotations
 
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
 import structlog
 
-from searchops.a2a.protocol.envelopes import A2AMessageEnvelope
+if TYPE_CHECKING:
+    from searchops.a2a.protocol.envelopes import A2AMessageEnvelope
 
 log = structlog.get_logger(__name__)
 
@@ -38,19 +39,28 @@ class A2ADeadLetterQueue:
         if self.redis_client:
             try:
                 await self.redis_client.xadd(self.stream_key, entry)
-                log.warning("Pushed failed A2A envelope to Redis DLQ stream", message_id=envelope.message_id, reason=reason)
+                log.warning(
+                    "Pushed failed A2A envelope to Redis DLQ stream",
+                    message_id=envelope.message_id,
+                    reason=reason,
+                )
                 return
             except Exception as exc:
                 log.error("Failed to push to Redis DLQ stream, using memory fallback", error=str(exc))
 
         self._memory_dlq.append(entry)
-        log.warning("Pushed failed A2A envelope to memory DLQ", message_id=envelope.message_id, reason=reason)
+        log.warning(
+            "Pushed failed A2A envelope to memory DLQ",
+            message_id=envelope.message_id,
+            reason=reason,
+        )
 
     async def get_failed_count(self) -> int:
         """Return total failed envelopes currently in DLQ."""
         if self.redis_client:
             try:
-                return await self.redis_client.xlen(self.stream_key)
+                count = await self.redis_client.xlen(self.stream_key)
+                return int(count)
             except Exception:
                 pass
         return len(self._memory_dlq)

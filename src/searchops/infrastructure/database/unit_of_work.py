@@ -7,14 +7,17 @@ either all succeed (commit) or all fail (rollback), maintaining ACID guarantees.
 
 from __future__ import annotations
 
-from types import TracebackType
-from typing import Self
+from typing import TYPE_CHECKING, Self
 
 import structlog
-from sqlalchemy.ext.asyncio import AsyncSession
 
 from searchops.core.exceptions.infrastructure import DatabaseError
 from searchops.infrastructure.database.connection import get_sessionmaker
+
+if TYPE_CHECKING:
+    from types import TracebackType
+
+    from sqlalchemy.ext.asyncio import AsyncSession
 
 log = structlog.get_logger(__name__)
 

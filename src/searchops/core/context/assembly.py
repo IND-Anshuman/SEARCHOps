@@ -4,14 +4,17 @@ Context Assembly Service: Assembles GraphRAG entity subgraphs, vector chunks, hi
 
 from __future__ import annotations
 
-from typing import Any
+from typing import TYPE_CHECKING, Any
+
 import structlog
 from pydantic import BaseModel, Field
 
-from searchops.core.context.delta_compressor import ContextDeltaCompressor, CompressedContextDelta
-from searchops.core.interfaces.storage import IGraphStore, IVectorStore
-from searchops.knowledge.domain.entity import KGEntity, KGRelation
+from searchops.core.context.delta_compressor import CompressedContextDelta, ContextDeltaCompressor
 from searchops.llm.tokenizer import count_tokens
+
+if TYPE_CHECKING:
+    from searchops.core.interfaces.storage import IGraphStore, IVectorStore
+    from searchops.knowledge.domain.entity import KGEntity
 
 log = structlog.get_logger(__name__)
 
@@ -49,8 +52,7 @@ class ContextAssemblyService:
     ) -> AssembledContext:
         """Assemble domain context across Graph, Vector, and Scraped excerpts."""
         graph_entities = [
-            {"name": e.name, "type": e.entity_type, "description": e.description}
-            for e in (entities or [])
+            {"name": e.name, "type": e.entity_type, "description": e.description} for e in (entities or [])
         ]
         vector_excerpts = [
             {
@@ -66,7 +68,13 @@ class ContextAssemblyService:
         context_string = f"Query: {query}\nEntities: {graph_entities}\nDocs: {vector_excerpts}"
         total_tokens = count_tokens(context_string, "gpt-4o")
 
-        log.info("Assembled domain context", query=query, entities=len(graph_entities), docs=len(vector_excerpts), total_tokens=total_tokens)
+        log.info(
+            "Assembled domain context",
+            query=query,
+            entities=len(graph_entities),
+            docs=len(vector_excerpts),
+            total_tokens=total_tokens,
+        )
 
         return AssembledContext(
             query=query,

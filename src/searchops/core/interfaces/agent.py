@@ -7,19 +7,25 @@ Every agent in the platform implements IAgent, exposing:
 - execution (handling A2A tasks)
 - health (is the agent healthy?)
 """
+
 from __future__ import annotations
 
 import enum
-from typing import Any, AsyncIterator, Protocol, runtime_checkable
+from typing import TYPE_CHECKING, Any, Protocol, runtime_checkable
 
 from pydantic import BaseModel, Field
 
+# NOTE: intentionally runtime imports — AgentId/TaskId appear in Pydantic model
+# annotations (AgentCard), which must resolve at class-creation time.
 from searchops.typing.aliases import AgentId, TaskId
+
+if TYPE_CHECKING:
+    from collections.abc import AsyncIterator
 
 
 class AgentCapability(BaseModel):
     """A single capability advertised by an agent."""
-    
+
     name: str = Field(description="Unique capability identifier")
     description: str = Field(description="Human-readable capability description")
     input_schema: dict[str, Any] = Field(
@@ -35,7 +41,7 @@ class AgentCapability(BaseModel):
 
 class AgentCard(BaseModel):
     """A2A-compliant agent card for capability discovery."""
-    
+
     agent_id: AgentId = Field(description="Unique agent identifier")
     name: str = Field(description="Human-readable agent name")
     description: str = Field(description="Agent purpose and capabilities")
@@ -56,6 +62,7 @@ class AgentCard(BaseModel):
 
 class AgentTaskStatus(enum.StrEnum):
     """Lifecycle states of an agent task."""
+
     PENDING = "pending"
     RUNNING = "running"
     COMPLETED = "completed"
@@ -66,7 +73,7 @@ class AgentTaskStatus(enum.StrEnum):
 
 class AgentTask(BaseModel):
     """An A2A task submitted to an agent."""
-    
+
     task_id: TaskId
     capability: str
     input: dict[str, Any]
@@ -77,7 +84,7 @@ class AgentTask(BaseModel):
 
 class AgentTaskResult(BaseModel):
     """The result of an executed A2A task."""
-    
+
     task_id: TaskId
     status: AgentTaskStatus
     output: dict[str, Any] = Field(default_factory=dict)
@@ -91,34 +98,32 @@ class AgentTaskResult(BaseModel):
 @runtime_checkable
 class IAgent(Protocol):
     """Core agent protocol. Every agent in the platform implements this interface."""
-    
+
     @property
     def agent_card(self) -> AgentCard:
         """Return the A2A-compliant agent card."""
         ...
-    
+
     async def execute(self, task: AgentTask) -> AgentTaskResult:
         """Execute a task synchronously. Returns when the task is complete."""
         ...
-    
-    async def execute_streaming(
-        self, task: AgentTask
-    ) -> AsyncIterator[dict[str, Any]]:
+
+    async def execute_streaming(self, task: AgentTask) -> AsyncIterator[dict[str, Any]]:
         """Execute a task with streaming updates. Yields progress events."""
         ...
-    
+
     async def cancel(self, task_id: TaskId) -> bool:
         """Cancel a running task. Returns True if cancelled successfully."""
         ...
-    
+
     async def health_check(self) -> bool:
         """Return True if the agent is healthy and ready to accept tasks."""
         ...
-    
+
     async def initialize(self) -> None:
         """Perform async initialization."""
         ...
-    
+
     async def shutdown(self) -> None:
         """Perform graceful shutdown."""
         ...

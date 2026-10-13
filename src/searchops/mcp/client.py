@@ -12,7 +12,7 @@ from typing import Any
 import structlog
 
 from searchops.core.exceptions.infrastructure import ExternalServiceError
-from searchops.platform.registry.tool_registry import ToolDefinition, ToolRegistry
+from searchops.platform.registry.tool_registry import ToolRegistry
 
 log = structlog.get_logger(__name__)
 

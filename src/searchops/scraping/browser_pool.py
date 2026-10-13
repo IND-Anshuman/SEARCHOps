@@ -8,14 +8,14 @@ cold start latency (300-1200ms) and enable 10-50 concurrent contexts per browser
 from __future__ import annotations
 
 import asyncio
-import weakref
-from contextlib import asynccontextmanager
+from contextlib import asynccontextmanager, suppress
 from dataclasses import dataclass, field
-from typing import Any, AsyncGenerator
+from typing import TYPE_CHECKING, Any
 
 import structlog
 
-from searchops.scraping.playwright import PlaywrightScraper
+if TYPE_CHECKING:
+    from collections.abc import AsyncGenerator
 
 log = structlog.get_logger(__name__)
 
@@ -50,15 +50,17 @@ class PoolConfig:
     disable_dev_shm_usage: bool = False
     """If True, disables /dev/shm usage (use when shm is not available)."""
 
-    args: list[str] = field(default_factory=lambda: [
-        "--disable-blink-features=AutomationControlled",
-        "--no-sandbox",
-        "--disable-setuid-sandbox",
-        "--disable-dev-shm-usage",  # Fallback if /dev/shm is small
-        "--disable-gpu",
-        "--disable-web-security",
-        "--disable-features=IsolateOrigins,site-per-process",
-    ])
+    args: list[str] = field(
+        default_factory=lambda: [
+            "--disable-blink-features=AutomationControlled",
+            "--no-sandbox",
+            "--disable-setuid-sandbox",
+            "--disable-dev-shm-usage",  # Fallback if /dev/shm is small
+            "--disable-gpu",
+            "--disable-web-security",
+            "--disable-features=IsolateOrigins,site-per-process",
+        ]
+    )
     """Additional browser arguments for stealth and stability."""
 
 
@@ -70,12 +72,13 @@ class BrowserInstance:
     created_at: float = field(default_factory=lambda: asyncio.get_event_loop().time())
     request_count: int = 0
     contexts: list[Any] = field(default_factory=list)
+    playwright_ref: Any = None
 
     @property
     def is_healthy(self) -> bool:
         """Check if browser is still connected and responsive."""
         try:
-            return self.browser.is_connected()
+            return bool(self.browser.is_connected())
         except Exception:
             return False
 
@@ -100,10 +103,13 @@ class BrowserContext:
         """Access the underlying Playwright context."""
         return self._context
 
-    @property
     async def new_page(self) -> Any:
-        """Create a new page within this context."""
-        if self._page is None or not self._page.is_closed():
+        """Create a new page within this context.
+
+        Reuses the existing page while it is still open; only recreates when
+        there is no page yet or the previous one was closed.
+        """
+        if self._page is None or self._page.is_closed():
             self._page = await self._context.new_page()
         return self._page
 
@@ -137,7 +143,7 @@ class BrowserPool:
         self._lock = asyncio.Lock()
         self._shutdown = False
         self._total_acquired = 0
-        self._cleanup_task: asyncio.Task | None = None
+        self._cleanup_task: asyncio.Task[None] | None = None
 
     async def initialize(self) -> None:
         """Initialize the pool by pre-warming browsers."""
@@ -229,7 +235,7 @@ class BrowserPool:
                 )
                 yield ctx
                 return
-        except asyncio.TimeoutError:
+        except TimeoutError:
             pass  # Fall through to create new context
         except Exception as e:
             log.warning("Failed to reuse context, creating new one", error=str(e))
@@ -303,10 +309,8 @@ class BrowserPool:
         try:
             # Close all contexts
             for context in instance.contexts:
-                try:
+                with suppress(Exception):
                     await context.close()
-                except Exception:
-                    pass
 
             # Close browser
             if instance.is_healthy:
@@ -356,10 +360,8 @@ class BrowserPool:
         # Cancel cleanup task
         if self._cleanup_task:
             self._cleanup_task.cancel()
-            try:
+            with suppress(asyncio.CancelledError):
                 await self._cleanup_task
-            except asyncio.CancelledError:
-                pass
 
         # Close all browsers
         for instance in self._browsers:

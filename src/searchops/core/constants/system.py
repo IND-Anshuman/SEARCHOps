@@ -3,6 +3,7 @@ System-wide constants.
 
 All magic values must live here. Never use bare numbers/strings in application code.
 """
+
 from __future__ import annotations
 
 # ─── General ─────────────────────────────────────────────────────────────────
@@ -33,10 +34,10 @@ RETRY_MULTIPLIER: float = 2.0
 
 # ─── Content limits ──────────────────────────────────────────────────────────
 
-MAX_CONTENT_LENGTH: int = 10 * 1024 * 1024   # 10 MB
+MAX_CONTENT_LENGTH: int = 10 * 1024 * 1024  # 10 MB
 MAX_SCRAPING_CONTENT_LENGTH: int = 5 * 1024 * 1024  # 5 MB
-MAX_PROMPT_LENGTH: int = 100_000             # characters
-MAX_REPORT_LENGTH: int = 500_000            # characters
+MAX_PROMPT_LENGTH: int = 100_000  # characters
+MAX_REPORT_LENGTH: int = 500_000  # characters
 
 # ─── Cache key prefixes ─────────────────────────────────────────────────────────
 
@@ -70,7 +71,7 @@ DEFAULT_AGENT_HEARTBEAT_SECONDS: float = 30.0
 
 # ─── Vector store ───────────────────────────────────────────────────────────
 
-DEFAULT_EMBEDDING_DIMENSION: int = 3072    # text-embedding-3-large
+DEFAULT_EMBEDDING_DIMENSION: int = 3072  # text-embedding-3-large
 DEFAULT_VECTOR_TOP_K: int = 10
 DEFAULT_SIMILARITY_THRESHOLD: float = 0.75
 

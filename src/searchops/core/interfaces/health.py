@@ -1,6 +1,7 @@
 """
 Health check protocol and value objects.
 """
+
 from __future__ import annotations
 
 import enum
@@ -11,6 +12,7 @@ from pydantic import BaseModel, Field
 
 class HealthStatus(enum.StrEnum):
     """Health check result status."""
+
     HEALTHY = "healthy"
     DEGRADED = "degraded"
     UNHEALTHY = "unhealthy"
@@ -18,7 +20,7 @@ class HealthStatus(enum.StrEnum):
 
 class HealthCheckResult(BaseModel):
     """Result of a single health check."""
-    
+
     name: str = Field(description="Health check name")
     status: HealthStatus
     message: str | None = Field(default=None, description="Optional detail message")
@@ -29,12 +31,12 @@ class HealthCheckResult(BaseModel):
 @runtime_checkable
 class IHealthCheck(Protocol):
     """Contract for all health checks."""
-    
+
     @property
     def name(self) -> str:
         """Unique health check name."""
         ...
-    
+
     async def check(self) -> HealthCheckResult:
         """Execute the health check and return a result."""
         ...

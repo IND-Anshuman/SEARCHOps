@@ -16,6 +16,7 @@ import structlog
 # Try to import parsing libraries, fallback to basic implementation
 try:
     from selectolax.parser import HTMLParser
+
     SELECTOLAX_AVAILABLE = True
 except ImportError:
     SELECTOLAX_AVAILABLE = False
@@ -61,24 +62,63 @@ class PruningConfig:
     def __post_init__(self) -> None:
         if self.remove_selectors is None:
             self.remove_selectors = [
-                "script", "style", "noscript", "iframe", "object", "embed",
-                "nav", "header", "footer", "aside",
-                "[role='navigation']", "[role='banner']", "[role='contentinfo']",
-                ".nav", ".navigation", ".menu", ".sidebar", ".widget",
-                ".advertisement", ".ad", ".ads", ".advert",
-                ".social", ".share", ".sharing",
-                ".cookie", ".consent", ".popup", ".modal",
-                ".comment", ".comments", ".related", ".recommended",
-                "#nav", "#navigation", "#menu", "#sidebar",
-                "#header", "#footer", "#comments",
-                "form[action*='subscribe']", "form[action*='signup']",
+                "script",
+                "style",
+                "noscript",
+                "iframe",
+                "object",
+                "embed",
+                "nav",
+                "header",
+                "footer",
+                "aside",
+                "[role='navigation']",
+                "[role='banner']",
+                "[role='contentinfo']",
+                ".nav",
+                ".navigation",
+                ".menu",
+                ".sidebar",
+                ".widget",
+                ".advertisement",
+                ".ad",
+                ".ads",
+                ".advert",
+                ".social",
+                ".share",
+                ".sharing",
+                ".cookie",
+                ".consent",
+                ".popup",
+                ".modal",
+                ".comment",
+                ".comments",
+                ".related",
+                ".recommended",
+                "#nav",
+                "#navigation",
+                "#menu",
+                "#sidebar",
+                "#header",
+                "#footer",
+                "#comments",
+                "form[action*='subscribe']",
+                "form[action*='signup']",
                 "[aria-hidden='true']",
             ]
         if self.preserve_selectors is None:
             self.preserve_selectors = [
-                "main", "article", "[role='main']", "[role='article']",
-                ".content", ".post", ".entry", ".article-body",
-                "#content", "#main", "#article",
+                "main",
+                "article",
+                "[role='main']",
+                "[role='article']",
+                ".content",
+                ".post",
+                ".entry",
+                ".article-body",
+                "#content",
+                "#main",
+                "#article",
             ]
 
 
@@ -105,10 +145,7 @@ class ContentPruner:
     def _init_parser(self) -> None:
         """Initialize the HTML parser."""
         if not SELECTOLAX_AVAILABLE:
-            log.warning(
-                "selectolax not available, using basic HTML parsing. "
-                "Install with: pip install selectolax"
-            )
+            log.warning("selectolax not available, using basic HTML parsing. Install with: pip install selectolax")
 
     def prune(self, html: str) -> str:
         """
@@ -172,7 +209,6 @@ class ContentPruner:
 
     def _selectolax_to_markdown(self, node: Any) -> str:
         """Convert selectolax node to Markdown."""
-        from selectolax.parser import HTMLParser
 
         # Get text content with basic structure
         text_parts: list[str] = []
@@ -188,9 +224,9 @@ class ContentPruner:
                     text_parts.append(text)
 
             # Handle elements based on tag
-            tag = n.tag if hasattr(n, 'tag') else str(n)
+            tag = n.tag if hasattr(n, "tag") else str(n)
 
-            if tag in ('h1', 'h2', 'h3', 'h4', 'h5', 'h6'):
+            if tag in ("h1", "h2", "h3", "h4", "h5", "h6"):
                 level = int(tag[1])
                 if level <= self.config.max_heading_level:
                     text = n.text().strip()
@@ -198,49 +234,49 @@ class ContentPruner:
                         prefix = "#" * level
                         text_parts.append(f"\n{prefix} {text}\n")
 
-            elif tag == 'p':
+            elif tag == "p":
                 text = n.text().strip()
                 if text and len(text) >= self.config.min_text_length:
                     text_parts.append(f"\n{text}\n")
 
-            elif tag == 'a' and self.config.preserve_links:
+            elif tag == "a" and self.config.preserve_links:
                 text = n.text().strip()
-                href = n.attributes.get('href', '')
+                href = n.attributes.get("href", "")
                 if text and href:
                     text_parts.append(f"[{text}]({href})")
 
-            elif tag == 'img' and self.config.preserve_images:
-                src = n.attributes.get('src', '')
-                alt = n.attributes.get('alt', '')
+            elif tag == "img" and self.config.preserve_images:
+                src = n.attributes.get("src", "")
+                alt = n.attributes.get("alt", "")
                 if src:
                     text_parts.append(f"![{alt}]({src})")
 
-            elif tag == 'ul':
-                for li in n.css('li'):
+            elif tag == "ul":
+                for li in n.css("li"):
                     text = li.text().strip()
                     if text:
                         text_parts.append(f"- {text}")
 
-            elif tag == 'ol':
-                for i, li in enumerate(n.css('li'), 1):
+            elif tag == "ol":
+                for i, li in enumerate(n.css("li"), 1):
                     text = li.text().strip()
                     if text:
                         text_parts.append(f"{i}. {text}")
 
-            elif tag == 'table' and self.config.preserve_tables:
+            elif tag == "table" and self.config.preserve_tables:
                 table_md = self._parse_table(n)
                 if table_md:
                     text_parts.append(table_md)
 
-            elif tag == 'pre' or tag == 'code':
-                if tag == 'pre':
+            elif tag == "pre" or tag == "code":
+                if tag == "pre":
                     code = n.text().strip()
                     if code:
                         lang = n.css_first('code[class*="language-"]')
                         lang_str = ""
                         if lang:
-                            cls = lang.attributes.get('class', '')
-                            match = re.search(r'language-(\w+)', cls)
+                            cls = lang.attributes.get("class", "")
+                            match = re.search(r"language-(\w+)", cls)
                             if match:
                                 lang_str = match.group(1)
                         text_parts.append(f"\n```{lang_str}\n{code}\n```\n")
@@ -249,20 +285,20 @@ class ContentPruner:
                     if code:
                         text_parts.append(f"`{code}`")
 
-            elif tag == 'blockquote':
+            elif tag == "blockquote":
                 text = n.text().strip()
                 if text:
-                    for line in text.split('\n'):
+                    for line in text.split("\n"):
                         text_parts.append(f"> {line}")
 
-            elif tag == 'br':
+            elif tag == "br":
                 text_parts.append("\n")
 
-            elif tag == 'hr':
+            elif tag == "hr":
                 text_parts.append("\n---\n")
 
-            # Process children
-            for child in n.children or []:
+            # Process children (selectolax exposes .iter(), not .children)
+            for child in n.iter():
                 process_node(child, depth + 1)
 
         process_node(node)
@@ -274,16 +310,15 @@ class ContentPruner:
         rows = []
 
         # Get all rows
-        for tr in table_node.css('tr'):
+        for tr in table_node.css("tr"):
             cells = []
 
             # Check if this is a header row
-            is_header = tr.parent and tr.parent.tag in ('thead', 'table')
 
-            for cell in tr.css('th, td'):
+            for cell in tr.css("th, td"):
                 text = cell.text().strip()
                 # Handle colspan/rowspan
-                colspan = int(cell.attributes.get('colspan', 1))
+                colspan = int(cell.attributes.get("colspan", 1))
                 colspan_text = f"| {text} " * colspan
                 cells.append(colspan_text)
 
@@ -295,7 +330,7 @@ class ContentPruner:
 
         # Add separator after header
         if rows:
-            header_parts = rows[0].split('|')
+            header_parts = rows[0].split("|")
             separator = "| " + " --- |" * (len(header_parts) - 2)
             rows.insert(1, separator)
 
@@ -304,14 +339,14 @@ class ContentPruner:
     def _post_process(self, markdown: str) -> str:
         """Post-process Markdown for quality."""
         # Remove multiple consecutive blank lines
-        markdown = re.sub(r'\n{3,}', '\n\n', markdown)
+        markdown = re.sub(r"\n{3,}", "\n\n", markdown)
 
         # Remove multiple consecutive headers
-        markdown = re.sub(r'(#{1,6}\s.*\n){2,}', lambda m: m.group(0).split('\n')[0] + '\n', markdown)
+        markdown = re.sub(r"(#{1,6}\s.*\n){2,}", lambda m: m.group(0).split("\n")[0] + "\n", markdown)
 
         # Clean up whitespace
-        lines = []
-        for line in markdown.split('\n'):
+        lines: list[str] = []
+        for line in markdown.split("\n"):
             line = line.rstrip()
             if line or (lines and lines[-1]):
                 lines.append(line)
@@ -325,43 +360,43 @@ class ContentPruner:
     def _prune_basic(self, html: str) -> str:
         """Basic HTML to Markdown without selectolax."""
         # Remove script and style tags completely
-        html = re.sub(r'<script[^>]*>.*?</script>', '', html, flags=re.DOTALL | re.IGNORECASE)
-        html = re.sub(r'<style[^>]*>.*?</style>', '', html, flags=re.DOTALL | re.IGNORECASE)
-        html = re.sub(r'<noscript[^>]*>.*?</noscript>', '', html, flags=re.DOTALL | re.IGNORECASE)
+        html = re.sub(r"<script[^>]*>.*?</script>", "", html, flags=re.DOTALL | re.IGNORECASE)
+        html = re.sub(r"<style[^>]*>.*?</style>", "", html, flags=re.DOTALL | re.IGNORECASE)
+        html = re.sub(r"<noscript[^>]*>.*?</noscript>", "", html, flags=re.DOTALL | re.IGNORECASE)
 
         # Remove nav, header, footer, aside
-        for tag in ['nav', 'header', 'footer', 'aside', 'main', 'article']:
-            html = re.sub(f'<{tag}[^>]*>.*?</{tag}>', '', html, flags=re.DOTALL | re.IGNORECASE)
+        for tag in ["nav", "header", "footer", "aside", "main", "article"]:
+            html = re.sub(f"<{tag}[^>]*>.*?</{tag}>", "", html, flags=re.DOTALL | re.IGNORECASE)
 
         # Convert to basic Markdown
         markdown = self._basic_strip_tags(html)
 
         # Basic formatting
-        markdown = re.sub(r'^#{1,6}\s+', lambda m: m.group(0).upper(), markdown, flags=re.MULTILINE)
-        markdown = re.sub(r'\*\*(.+?)\*\*', r'**\1**', markdown)
-        markdown = re.sub(r'__(.+?)__', r'**\1**', markdown)
+        markdown = re.sub(r"^#{1,6}\s+", lambda m: m.group(0).upper(), markdown, flags=re.MULTILINE)
+        markdown = re.sub(r"\*\*(.+?)\*\*", r"**\1**", markdown)
+        markdown = re.sub(r"__(.+?)__", r"**\1**", markdown)
 
         return self._post_process(markdown)
 
     def _basic_strip_tags(self, html: str) -> str:
         """Strip HTML tags, keeping basic structure."""
         # Replace block elements with newlines
-        for tag in ['p', 'div', 'br', 'h1', 'h2', 'h3', 'h4', 'h5', 'h6', 'li', 'tr']:
-            html = re.sub(f'</?\\s*{tag}[^>]*>', '\n', html, flags=re.IGNORECASE)
+        for tag in ["p", "div", "br", "h1", "h2", "h3", "h4", "h5", "h6", "li", "tr"]:
+            html = re.sub(f"</?\\s*{tag}[^>]*>", "\n", html, flags=re.IGNORECASE)
 
         # Strip remaining tags
-        html = re.sub(r'<[^>]+>', '', html)
+        html = re.sub(r"<[^>]+>", "", html)
 
         # Decode HTML entities
-        html = html.replace('&nbsp;', ' ')
-        html = html.replace('&amp;', '&')
-        html = html.replace('&lt;', '<')
-        html = html.replace('&gt;', '>')
-        html = html.replace('&quot;', '"')
-        html = html.replace('&#39;', "'")
+        html = html.replace("&nbsp;", " ")
+        html = html.replace("&amp;", "&")
+        html = html.replace("&lt;", "<")
+        html = html.replace("&gt;", ">")
+        html = html.replace("&quot;", '"')
+        html = html.replace("&#39;", "'")
 
         # Clean up whitespace
-        html = re.sub(r'\n{3,}', '\n\n', html)
+        html = re.sub(r"\n{3,}", "\n\n", html)
         html = html.strip()
 
         return html

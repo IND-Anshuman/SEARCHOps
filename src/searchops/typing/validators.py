@@ -4,6 +4,7 @@ Annotated type validators.
 Used with Pydantic v2 Annotated fields to enforce constraints declaratively
 without repeating validation logic across models.
 """
+
 from __future__ import annotations
 
 from typing import Annotated

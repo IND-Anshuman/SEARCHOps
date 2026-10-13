@@ -23,11 +23,12 @@ from __future__ import annotations
 
 import asyncio
 import base64
+import contextlib
 import time
+from typing import TYPE_CHECKING, Any, cast
 
 import structlog
 
-from searchops.config.subsystems.scraping import ScrapingSettings
 from searchops.core.interfaces.scraper import IScraper, ScrapeMode, ScrapeRequest, ScrapeResult
 from searchops.scraping.bd_auth import (
     build_browser_cdp_url,
@@ -39,6 +40,9 @@ from searchops.scraping.bd_metrics import (
     record_bd_request,
 )
 from searchops.scraping.content_pruner import get_content_pruner
+
+if TYPE_CHECKING:
+    from searchops.config.subsystems.scraping import ScrapingSettings
 
 log = structlog.get_logger(__name__)
 
@@ -90,15 +94,13 @@ class BrightDataBrowserScraper(IScraper):
             async with self._pool.acquire() as session:  # type: ignore[union-attr]
                 page = None
                 try:
-                    page = await session.browser.new_page()  # type: ignore[attr-defined]
+                    page = await cast("Any", session.browser).new_page()
                     return await self._do_scrape(page, request, start)
                 finally:
                     if page is not None:
-                        try:
+                        with contextlib.suppress(Exception):
                             await page.close()
-                        except Exception:
-                            pass
-        except asyncio.TimeoutError:
+        except TimeoutError:
             elapsed_ms = (time.perf_counter() - start) * 1000
             log.error("bd_browser.scrape: pool acquire timeout", url=request.url)
             record_bd_request("browser", "failure", elapsed_ms / 1000)
@@ -152,10 +154,8 @@ class BrightDataBrowserScraper(IScraper):
             log.error("bd_browser.scrape: direct exception", url=request.url, error=safe_err)
             record_bd_request("browser", "failure", elapsed_ms / 1000)
             if browser is not None:
-                try:
+                with contextlib.suppress(Exception):
                     await browser.close()
-                except Exception:
-                    pass
             return ScrapeResult(
                 url=request.url,
                 final_url=request.url,
@@ -216,9 +216,7 @@ class BrightDataBrowserScraper(IScraper):
             metadata={"proxy": "brightdata_scraping_browser"},
         )
 
-    async def scrape_many(
-        self, requests: list[ScrapeRequest], *, max_concurrency: int = 3
-    ) -> list[ScrapeResult]:
+    async def scrape_many(self, requests: list[ScrapeRequest], *, max_concurrency: int = 3) -> list[ScrapeResult]:
         """
         Scrape multiple URLs concurrently via BD Cloud Browser.
 
@@ -239,6 +237,7 @@ class BrightDataBrowserScraper(IScraper):
             return await self._pool.health_check()
 
         from playwright.async_api import async_playwright
+
         cdp_url = build_browser_cdp_url(
             customer_id=self._customer_id,
             zone=self._zone,

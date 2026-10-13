@@ -56,27 +56,54 @@ except ImportError:  # pragma: no cover
 # ---------------------------------------------------------------------------
 # Supported impersonation targets (curl_cffi 0.7+)
 # ---------------------------------------------------------------------------
-IMPERSONATE_TARGETS: frozenset[str] = frozenset({
-    "chrome99", "chrome100", "chrome101", "chrome104", "chrome107",
-    "chrome110", "chrome116", "chrome119", "chrome120", "chrome123",
-    "chrome124",   # ← default: best overall WAF bypass rate as of 2025-Q1
-    "chrome131", "chrome133",
-    "chrome99_android",
-    "firefox91esr", "firefox95", "firefox98", "firefox100",
-    "firefox102", "firefox104", "firefox109", "firefox117",
-    "firefox120", "firefox121", "firefox123", "firefox133",
-    "safari15_3", "safari15_5", "safari16", "safari16_5",
-    "safari17_0", "safari17_2_ios", "safari18_0",
-    "edge99", "edge101",
-})
+IMPERSONATE_TARGETS: frozenset[str] = frozenset(
+    {
+        "chrome99",
+        "chrome100",
+        "chrome101",
+        "chrome104",
+        "chrome107",
+        "chrome110",
+        "chrome116",
+        "chrome119",
+        "chrome120",
+        "chrome123",
+        "chrome124",  # ← default: best overall WAF bypass rate as of 2025-Q1
+        "chrome131",
+        "chrome133",
+        "chrome99_android",
+        "firefox91esr",
+        "firefox95",
+        "firefox98",
+        "firefox100",
+        "firefox102",
+        "firefox104",
+        "firefox109",
+        "firefox117",
+        "firefox120",
+        "firefox121",
+        "firefox123",
+        "firefox133",
+        "safari15_3",
+        "safari15_5",
+        "safari16",
+        "safari16_5",
+        "safari17_0",
+        "safari17_2_ios",
+        "safari18_0",
+        "edge99",
+        "edge101",
+    }
+)
 
 _DEFAULT_IMPERSONATE = "chrome124"
-_DEFAULT_TIMEOUT     = 30.0  # seconds
+_DEFAULT_TIMEOUT = 30.0  # seconds
 
 
 # ---------------------------------------------------------------------------
 # Immutable configuration
 # ---------------------------------------------------------------------------
+
 
 @dataclass(frozen=True, slots=True)
 class StealthConfig:
@@ -111,14 +138,14 @@ class StealthConfig:
     def __post_init__(self) -> None:
         if self.impersonate not in IMPERSONATE_TARGETS:
             raise ValueError(
-                f"Unknown impersonation target {self.impersonate!r}. "
-                f"Valid values: {sorted(IMPERSONATE_TARGETS)}"
+                f"Unknown impersonation target {self.impersonate!r}. Valid values: {sorted(IMPERSONATE_TARGETS)}"
             )
 
 
 # ---------------------------------------------------------------------------
 # Browser-like request headers (Chrome 124 profile)
 # ---------------------------------------------------------------------------
+
 
 def _chrome124_headers(url: str) -> dict[str, str]:
     """
@@ -137,9 +164,7 @@ def _chrome124_headers(url: str) -> dict[str, str]:
         "Accept-Encoding": "gzip, deflate, br, zstd",
         "Accept-Language": "en-US,en;q=0.9",
         "Cache-Control": "max-age=0",
-        "Sec-Ch-Ua": (
-            '"Chromium";v="124", "Google Chrome";v="124", "Not-A.Brand";v="99"'
-        ),
+        "Sec-Ch-Ua": ('"Chromium";v="124", "Google Chrome";v="124", "Not-A.Brand";v="99"'),
         "Sec-Ch-Ua-Mobile": "?0",
         "Sec-Ch-Ua-Platform": '"Windows"',
         "Sec-Fetch-Dest": "document",
@@ -154,6 +179,7 @@ def _chrome124_headers(url: str) -> dict[str, str]:
 # ---------------------------------------------------------------------------
 # StealthHTTPScraper  (Tier 0 — direct, no proxy)
 # ---------------------------------------------------------------------------
+
 
 class StealthHTTPScraper(IScraper):
     """
@@ -276,6 +302,7 @@ class StealthHTTPScraper(IScraper):
         """Return True when curl_cffi is importable (package is installed)."""
         try:
             import curl_cffi  # noqa: F401
+
             return True
         except ImportError:
             log.error("curl_cffi not installed — StealthHTTPScraper unavailable")
@@ -296,15 +323,11 @@ class StealthHTTPScraper(IScraper):
             ``(html_text_or_None, final_url_after_redirects, http_status_code)``
         """
         if AsyncSession is None:  # pragma: no cover
-            raise RuntimeError(
-                "curl_cffi is not installed. Run: uv add 'curl-cffi>=0.7.0'"
-            )
+            raise RuntimeError("curl_cffi is not installed. Run: uv add 'curl-cffi>=0.7.0'")
 
-        timeout  = float(request.timeout_seconds or self._cfg.read_timeout)
+        timeout = float(request.timeout_seconds or self._cfg.read_timeout)
         proxies: dict[str, str] | None = (
-            {"https": self._cfg.proxy_url, "http": self._cfg.proxy_url}
-            if self._cfg.proxy_url
-            else None
+            {"https": self._cfg.proxy_url, "http": self._cfg.proxy_url} if self._cfg.proxy_url else None
         )
 
         # Layer headers: browser defaults → config extras → per-request overrides
@@ -334,10 +357,10 @@ class StealthHTTPScraper(IScraper):
         )
 
 
-
 # ---------------------------------------------------------------------------
 # ProxyRouter  (Tier 0b — residential proxy wrapper)
 # ---------------------------------------------------------------------------
+
 
 class ProxyRouter(StealthHTTPScraper):
     """
@@ -349,7 +372,7 @@ class ProxyRouter(StealthHTTPScraper):
     Proxy credentials are never logged in plaintext (masked in debug output).
 
     Cost model:  ~$1/GB (DataImpulse)  ≈ $0.001 per average 1 MB page.
-    Latency:     +250–300 ms over direct connection.
+    Latency:     +250-300 ms over direct connection.
 
     Example::
 
@@ -381,6 +404,7 @@ class ProxyRouter(StealthHTTPScraper):
 # Factory helpers — wired to application settings
 # ---------------------------------------------------------------------------
 
+
 def build_stealth_scraper(settings: Any | None = None) -> StealthHTTPScraper:
     """
     Build a ``StealthHTTPScraper`` (Tier 0) from application settings.
@@ -396,6 +420,7 @@ def build_stealth_scraper(settings: Any | None = None) -> StealthHTTPScraper:
     """
     if settings is None:
         from searchops.config.settings import get_settings
+
         settings = get_settings().scraping
 
     return StealthHTTPScraper(
@@ -424,6 +449,7 @@ def build_proxy_router(settings: Any | None = None) -> ProxyRouter | None:
     """
     if settings is None:
         from searchops.config.settings import get_settings
+
         settings = get_settings().scraping
 
     if not getattr(settings, "proxy_enabled", False):
@@ -437,11 +463,7 @@ def build_proxy_router(settings: Any | None = None) -> ProxyRouter | None:
         )
         return None
 
-    proxy_url = (
-        proxy_secret.get_secret_value()
-        if hasattr(proxy_secret, "get_secret_value")
-        else str(proxy_secret)
-    )
+    proxy_url = proxy_secret.get_secret_value() if hasattr(proxy_secret, "get_secret_value") else str(proxy_secret)
 
     return ProxyRouter(
         proxy_url=proxy_url,
@@ -453,6 +475,7 @@ def build_proxy_router(settings: Any | None = None) -> ProxyRouter | None:
 # ---------------------------------------------------------------------------
 # Private utilities
 # ---------------------------------------------------------------------------
+
 
 def _mask_proxy(proxy_url: str) -> str:
     """Return *proxy_url* with the password redacted, safe for log output."""

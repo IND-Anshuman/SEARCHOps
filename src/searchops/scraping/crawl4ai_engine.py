@@ -12,7 +12,7 @@ Wraps crawl4ai's ``AsyncWebCrawler`` with a production-grade configuration:
   Result: strips cookie banners, legal boilerplate, and whitespace noise.
 
 - **fit_markdown** output — post-filter Markdown that crawl4ai considers
-  semantically "fit" for LLM consumption, typically 50–70% fewer tokens
+  semantically "fit" for LLM consumption, typically 50-70% fewer tokens
   than raw HTML conversion.
 
 Position in Pipeline (Tier 0.5):
@@ -25,7 +25,7 @@ Position in Pipeline (Tier 0.5):
 Why use Crawl4AI instead of extending ContentPruner?
 - ContentPruner processes already-fetched HTML (post-hoc).
 - Crawl4AI drives its own Playwright context, applies smarter async chunking,
-  and provides built-in link-graph extraction — 6× faster throughput than
+  and provides built-in link-graph extraction — 6x faster throughput than
   naive Playwright scripts for JS-heavy SPAs.
 - Achieves semantically filtered ``fit_markdown`` vs raw Markdown.
 
@@ -59,30 +59,31 @@ log = structlog.get_logger(__name__)
 # them.  Falls back gracefully when crawl4ai is not installed.
 # ---------------------------------------------------------------------------
 try:
-    from crawl4ai import AsyncWebCrawler, BrowserConfig, CrawlerRunConfig, CacheMode
+    from crawl4ai import AsyncWebCrawler, BrowserConfig, CacheMode, CrawlerRunConfig
     from crawl4ai.content_filter_strategy import PruningContentFilter
 except ImportError:  # pragma: no cover
-    AsyncWebCrawler = None  # type: ignore[assignment,misc]
-    BrowserConfig = None    # type: ignore[assignment,misc]
-    CrawlerRunConfig = None  # type: ignore[assignment,misc]
-    CacheMode = None         # type: ignore[assignment,misc]
-    PruningContentFilter = None  # type: ignore[assignment,misc]
+    AsyncWebCrawler = None
+    BrowserConfig = None
+    CrawlerRunConfig = None
+    CacheMode = None
+    PruningContentFilter = None
 
 
 # ---------------------------------------------------------------------------
 # Constants
 # ---------------------------------------------------------------------------
 
-_ENTROPY_THRESHOLD       = 0.45   # Info-density threshold for PruningContentFilter
-_BM25_THRESHOLD          = 0.30   # BM25 relevance threshold
-_WORD_COUNT_MIN          = 10     # Skip DOM elements with fewer words
-_MAX_INTERNAL_LINKS      = 50     # Cap link list to avoid over-indexing
-_DEFAULT_MAX_CONCURRENCY = 5      # Concurrent scrapes (crawl4ai has its own pool)
+_ENTROPY_THRESHOLD = 0.45  # Info-density threshold for PruningContentFilter
+_BM25_THRESHOLD = 0.30  # BM25 relevance threshold
+_WORD_COUNT_MIN = 10  # Skip DOM elements with fewer words
+_MAX_INTERNAL_LINKS = 50  # Cap link list to avoid over-indexing
+_DEFAULT_MAX_CONCURRENCY = 5  # Concurrent scrapes (crawl4ai has its own pool)
 
 
 # ---------------------------------------------------------------------------
 # Configuration
 # ---------------------------------------------------------------------------
+
 
 @dataclass(frozen=True, slots=True)
 class Crawl4AIConfig:
@@ -97,10 +98,10 @@ class Crawl4AIConfig:
     """Run browser in headless mode (False = visible, useful for debugging)."""
 
     entropy_threshold: float = _ENTROPY_THRESHOLD
-    """PruningContentFilter entropy gate (0.0–1.0; lower = stricter pruning)."""
+    """PruningContentFilter entropy gate (0.0-1.0; lower = stricter pruning)."""
 
     bm25_threshold: float = _BM25_THRESHOLD
-    """BM25ContentFilter relevance gate (0.0–1.0)."""
+    """BM25ContentFilter relevance gate (0.0-1.0)."""
 
     word_count_min: int = _WORD_COUNT_MIN
     """Skip DOM elements with fewer words than this."""
@@ -114,19 +115,22 @@ class Crawl4AIConfig:
     use_fit_markdown: bool = True
     """Prefer ``fit_markdown`` over raw markdown when available."""
 
-    extra_browser_args: list[str] = field(default_factory=lambda: [
-        "--disable-dev-shm-usage",
-        "--no-sandbox",
-        "--disable-gpu",
-        "--disable-blink-features=AutomationControlled",
-        "--disable-extensions",
-    ])
+    extra_browser_args: list[str] = field(
+        default_factory=lambda: [
+            "--disable-dev-shm-usage",
+            "--no-sandbox",
+            "--disable-gpu",
+            "--disable-blink-features=AutomationControlled",
+            "--disable-extensions",
+        ]
+    )
     """Additional Chromium launch arguments for performance and stealth."""
 
 
 # ---------------------------------------------------------------------------
 # Crawl4AIScraper
 # ---------------------------------------------------------------------------
+
 
 class Crawl4AIScraper(IScraper):
     """
@@ -155,9 +159,9 @@ class Crawl4AIScraper(IScraper):
     """
 
     def __init__(self, config: Crawl4AIConfig | None = None) -> None:
-        self._cfg     = config or Crawl4AIConfig()
-        self._crawler: Any | None = None          # Lazy init
-        self._lock    = asyncio.Lock()             # Serialise crawler init
+        self._cfg = config or Crawl4AIConfig()
+        self._crawler: Any | None = None  # Lazy init
+        self._lock = asyncio.Lock()  # Serialise crawler init
 
         log.debug("Crawl4AIScraper created", entropy_threshold=self._cfg.entropy_threshold)
 
@@ -211,8 +215,8 @@ class Crawl4AIScraper(IScraper):
                 metadata={"error": result_raw.get("error", "crawl4ai returned success=False")},
             )
 
-        content   = result_raw["markdown"]
-        word_cnt  = len(content.split()) if content else 0
+        content = result_raw["markdown"]
+        word_cnt = len(content.split()) if content else 0
 
         log.info(
             "crawl4ai.scrape.done",
@@ -235,7 +239,7 @@ class Crawl4AIScraper(IScraper):
             duration_ms=elapsed,
             metadata={
                 "fit_markdown_len": len(content),
-                "crawl4ai_version":  result_raw.get("version", "unknown"),
+                "crawl4ai_version": result_raw.get("version", "unknown"),
                 **(result_raw.get("extra_metadata", {})),
             },
         )
@@ -264,6 +268,7 @@ class Crawl4AIScraper(IScraper):
         """Return True when ``crawl4ai`` is importable."""
         try:
             import crawl4ai  # noqa: F401
+
             return True
         except ImportError:
             log.error("crawl4ai not installed — Crawl4AIScraper unavailable")
@@ -358,17 +363,19 @@ class Crawl4AIScraper(IScraper):
         run_cfg = CrawlerRunConfig(
             content_filter=content_filter,
             word_count_threshold=self._cfg.word_count_min,
-            cache_mode=CacheMode.BYPASS,          # Always fetch fresh (we cache in Redis)
+            cache_mode=CacheMode.BYPASS,  # Always fetch fresh (we cache in Redis)
             exclude_external_links=self._cfg.exclude_external_links,
             remove_overlay_elements=self._cfg.remove_overlay_elements,
         )
 
         crawler = await self._get_crawler()
-        res     = await crawler.arun(url=request.url, config=run_cfg)
+        res = await crawler.arun(url=request.url, config=run_cfg)
 
         # Prefer semantically-filtered fit_markdown; fall back to raw markdown
         if self._cfg.use_fit_markdown and res.fit_markdown:
-            content = res.fit_markdown.raw_markdown if hasattr(res.fit_markdown, "raw_markdown") else str(res.fit_markdown)
+            content = (
+                res.fit_markdown.raw_markdown if hasattr(res.fit_markdown, "raw_markdown") else str(res.fit_markdown)
+            )
         elif res.markdown:
             content = res.markdown.raw_markdown if hasattr(res.markdown, "raw_markdown") else str(res.markdown)
         else:
@@ -376,10 +383,9 @@ class Crawl4AIScraper(IScraper):
 
         # Extract internal links (hrefs only, capped)
         raw_links = res.links or {}
-        internal  = raw_links.get("internal", [])
+        internal = raw_links.get("internal", [])
         link_hrefs = [
-            lnk.get("href", lnk) if isinstance(lnk, dict) else str(lnk)
-            for lnk in internal[:_MAX_INTERNAL_LINKS]
+            lnk.get("href", lnk) if isinstance(lnk, dict) else str(lnk) for lnk in internal[:_MAX_INTERNAL_LINKS]
         ]
 
         # Extract metadata
@@ -388,15 +394,15 @@ class Crawl4AIScraper(IScraper):
             meta = dict(res.metadata) if isinstance(res.metadata, dict) else {}
 
         return {
-            "success":        bool(res.success),
-            "markdown":       content,
-            "html":           res.html if hasattr(res, "html") else None,
-            "final_url":      str(res.url) if res.url else request.url,
-            "title":          meta.pop("title", ""),
-            "links":          link_hrefs,
-            "version":        "0.9.x",
+            "success": bool(res.success),
+            "markdown": content,
+            "html": res.html if hasattr(res, "html") else None,
+            "final_url": str(res.url) if res.url else request.url,
+            "title": meta.pop("title", ""),
+            "links": link_hrefs,
+            "version": "0.9.x",
             "extra_metadata": meta,
-            "error":          getattr(res, "error_message", None),
+            "error": getattr(res, "error_message", None),
         }
 
 

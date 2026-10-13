@@ -8,12 +8,13 @@ subgraph extraction concurrently via asyncio.gather.
 from __future__ import annotations
 
 import asyncio
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
 import structlog
 
-from searchops.infrastructure.vector.qdrant import QdrantVectorRepository
-from searchops.knowledge.repository import Neo4jGraphRepository
+if TYPE_CHECKING:
+    from searchops.infrastructure.vector.qdrant import QdrantVectorRepository
+    from searchops.knowledge.repository import Neo4jGraphRepository
 
 log = structlog.get_logger(__name__)
 

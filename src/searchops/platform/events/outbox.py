@@ -36,13 +36,24 @@ class TransactionalEventOutbox:
         if self.redis_client:
             try:
                 await self.redis_client.xadd(self.stream_key, event_entry)
-                log.info("Published domain event to Redis Outbox stream", event_type=event_type, correlation_id=correlation_id)
+                log.info(
+                    "Published domain event to Redis Outbox stream",
+                    event_type=event_type,
+                    correlation_id=correlation_id,
+                )
                 return
             except Exception as exc:
-                log.error("Failed to publish event to Redis stream, saving to memory outbox", error=str(exc))
+                log.error(
+                    "Failed to publish event to Redis stream, saving to memory outbox",
+                    error=str(exc),
+                )
 
         self._outbox_store.append(event_entry)
-        log.info("Saved domain event to memory Outbox store", event_type=event_type, correlation_id=correlation_id)
+        log.info(
+            "Saved domain event to memory Outbox store",
+            event_type=event_type,
+            correlation_id=correlation_id,
+        )
 
     async def process_outbox_queue(self) -> int:
         """Process and flush pending outbox messages."""
@@ -71,4 +82,3 @@ class TransactionalEventOutbox:
     async def process_pending_events(self, bus: Any | None = None) -> int:
         """Relay pending outbox events to event bus or Redis stream."""
         return await self.process_outbox_queue()
-

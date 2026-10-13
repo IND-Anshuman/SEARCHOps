@@ -5,15 +5,16 @@ Knowledge Graph Domain Models: Entity and Relation.
 from __future__ import annotations
 
 import re
-import uuid
-from datetime import datetime, timezone
 from typing import Any
 
 from pydantic import Field
 
 from searchops.shared.domain.entity import BaseEntity
 from searchops.shared.domain.value_object import BaseValueObject
-from searchops.typing.aliases import EntityId, NodeId
+
+# NOTE: intentionally a runtime import — Pydantic must resolve `EntityId` forward
+# refs when building KGRelation. A TYPE_CHECKING-only import breaks model_rebuild.
+from searchops.typing.aliases import EntityId
 
 
 def slugify(text: str) -> str:
@@ -58,4 +59,3 @@ class KGRelation(BaseEntity):
     description: str = ""
     weight: float = Field(default=1.0, ge=0.0)
     properties: dict[str, Any] = Field(default_factory=dict)
-

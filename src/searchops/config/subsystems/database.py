@@ -2,8 +2,8 @@
 
 from __future__ import annotations
 
+from pydantic import Field, SecretStr, field_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
-from pydantic import Field, field_validator, SecretStr
 
 
 class DatabaseSettings(BaseSettings):
@@ -23,7 +23,9 @@ class DatabaseSettings(BaseSettings):
     echo_pool: bool = False
     ssl_mode: str = "prefer"
 
-    model_config = SettingsConfigDict(env_prefix="POSTGRES_", env_file=".env", extra="ignore", frozen=True, populate_by_name=True)
+    model_config = SettingsConfigDict(
+        env_prefix="POSTGRES_", env_file=".env", extra="ignore", frozen=True, populate_by_name=True
+    )
 
     @field_validator("pool_size")
     @classmethod
@@ -49,9 +51,13 @@ class DatabaseSettings(BaseSettings):
     @property
     def async_url(self) -> str:
         """Get the asynchronous database URL."""
-        return f"postgresql+asyncpg://{self.user}:{self.password.get_secret_value()}@{self.host}:{self.port}/{self.name}"
+        return (
+            f"postgresql+asyncpg://{self.user}:{self.password.get_secret_value()}@{self.host}:{self.port}/{self.name}"
+        )
 
     @property
     def sync_url(self) -> str:
         """Get the synchronous database URL."""
-        return f"postgresql+psycopg://{self.user}:{self.password.get_secret_value()}@{self.host}:{self.port}/{self.name}"
+        return (
+            f"postgresql+psycopg://{self.user}:{self.password.get_secret_value()}@{self.host}:{self.port}/{self.name}"
+        )

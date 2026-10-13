@@ -16,15 +16,19 @@ This design guarantees:
   - Connections are kept alive with bidirectional ping/pong
   - Connections are cleaned up deterministically on client disconnect
 """
+
 from __future__ import annotations
 
 import asyncio
+import contextlib
 import json
+from typing import TYPE_CHECKING, Any
 
 import structlog
 from fastapi import APIRouter, WebSocket, WebSocketDisconnect
 
-from searchops.bootstrap.container import ApplicationContainer
+if TYPE_CHECKING:
+    from searchops.bootstrap.container import ApplicationContainer
 
 log = structlog.get_logger(__name__)
 
@@ -50,6 +54,7 @@ async def research_progress_ws(
 
     # Resolve the shared singleton from app state
     from searchops.bootstrap.container import get_container
+
     try:
         container: ApplicationContainer = websocket.app.state.container
     except AttributeError:
@@ -62,11 +67,15 @@ async def research_progress_ws(
 
         if current_state is None:
             # Job not found — send a 404-equivalent and close
-            await websocket.send_text(json.dumps({
-                "job_id": job_id,
-                "error": f"Research job '{job_id}' not found.",
-                "status": "not_found",
-            }))
+            await websocket.send_text(
+                json.dumps(
+                    {
+                        "job_id": job_id,
+                        "error": f"Research job '{job_id}' not found.",
+                        "status": "not_found",
+                    }
+                )
+            )
             await websocket.close(code=4404)
             log.info("WebSocket closed: job not found", job_id=job_id)
             return
@@ -85,15 +94,9 @@ async def research_progress_ws(
             return
 
         # ── Step 2: Live streaming via pub/sub + bidirectional ping/pong ──────
-        listener_task = asyncio.create_task(
-            _pubsub_listener(websocket, job_id, job_state_manager)
-        )
-        heartbeat_task = asyncio.create_task(
-            _heartbeat(websocket, job_id)
-        )
-        reader_task = asyncio.create_task(
-            _incoming_reader(websocket, job_id)
-        )
+        listener_task = asyncio.create_task(_pubsub_listener(websocket, job_id, job_state_manager))
+        heartbeat_task = asyncio.create_task(_heartbeat(websocket, job_id))
+        reader_task = asyncio.create_task(_incoming_reader(websocket, job_id))
 
         done, pending = await asyncio.wait(
             {listener_task, heartbeat_task, reader_task},
@@ -103,10 +106,8 @@ async def research_progress_ws(
         # Cancel surviving tasks cleanly
         for task in pending:
             task.cancel()
-            try:
+            with contextlib.suppress(asyncio.CancelledError, Exception):
                 await task
-            except (asyncio.CancelledError, Exception):
-                pass
 
         # Check for unexpected exceptions
         for task in done:
@@ -120,10 +121,8 @@ async def research_progress_ws(
         log.info("WebSocket handler cancelled", job_id=job_id)
     except Exception as exc:
         log.error("WebSocket handler error", job_id=job_id, error=str(exc))
-        try:
+        with contextlib.suppress(Exception):
             await websocket.close(code=1011)
-        except Exception:
-            pass
     finally:
         log.info("WebSocket connection closed", job_id=job_id)
 
@@ -131,7 +130,7 @@ async def research_progress_ws(
 async def _pubsub_listener(
     websocket: WebSocket,
     job_id: str,
-    job_state_manager: object,
+    job_state_manager: Any,
 ) -> None:
     """Forward pub/sub messages to the WebSocket until job reaches terminal state."""
     async for state in job_state_manager.subscribe(job_id):
@@ -143,10 +142,8 @@ async def _pubsub_listener(
 
         if state.get("status") in _TERMINAL_STATUSES:
             # Job completed — close cleanly after delivering final state
-            try:
+            with contextlib.suppress(Exception):
                 await websocket.close()
-            except Exception:
-                pass
             return
 
 

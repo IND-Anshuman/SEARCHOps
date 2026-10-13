@@ -26,7 +26,10 @@ class ExtractedClaim(BaseModel):
 
     text: str = Field(..., description="One standalone factual statement")
     confidence: float = Field(default=0.5, ge=0.0, le=1.0)
-    citations: list[ExtractedCitation] = Field(default_factory=list)
+    # Optional and null-tolerant: models routinely emit ``"citations": null``
+    # or omit the key entirely, and a claim without citations is still
+    # evidence — rejecting the whole document over it loses real signal.
+    citations: list[ExtractedCitation] | None = Field(default=None, description="Sources attributed to the claim")
 
 
 class ClaimsResult(BaseModel):

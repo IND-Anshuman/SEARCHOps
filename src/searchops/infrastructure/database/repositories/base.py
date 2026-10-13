@@ -7,22 +7,23 @@ Maps between Domain Entities and SQLAlchemy ORM models cleanly.
 
 from __future__ import annotations
 
-from typing import Any, Generic, Sequence, TypeVar
+from typing import TYPE_CHECKING, Any, TypeVar, cast
 
-from sqlalchemy import delete, func, select, update
-from sqlalchemy.ext.asyncio import AsyncSession
+from sqlalchemy import delete, func, select
 
-from searchops.core.exceptions.domain import EntityNotFoundError
 from searchops.core.exceptions.infrastructure import DatabaseError
 from searchops.core.interfaces.repository import IRepository
 from searchops.infrastructure.database.base import BaseORM
+
+if TYPE_CHECKING:
+    from sqlalchemy.ext.asyncio import AsyncSession
 
 ORMModel = TypeVar("ORMModel", bound=BaseORM)
 DomainEntity = TypeVar("DomainEntity")
 ID = TypeVar("ID")
 
 
-class SQLAlchemyRepository(IRepository[DomainEntity, ID], Generic[ORMModel, DomainEntity, ID]):
+class SQLAlchemyRepository[ORMModel: BaseORM, DomainEntity, ID](IRepository[DomainEntity, ID]):
     """Generic async repository backed by SQLAlchemy 2.0."""
 
     def __init__(self, session: AsyncSession, model_cls: type[ORMModel]) -> None:
@@ -40,7 +41,7 @@ class SQLAlchemyRepository(IRepository[DomainEntity, ID], Generic[ORMModel, Doma
     async def get_by_id(self, entity_id: ID) -> DomainEntity | None:
         """Fetch entity by primary key."""
         try:
-            stmt = select(self.model_cls).where(getattr(self.model_cls, "id") == entity_id)
+            stmt = select(self.model_cls).where(cast("Any", self.model_cls).id == entity_id)
             result = await self.session.execute(stmt)
             model = result.scalar_one_or_none()
             return self._to_domain(model) if model else None
@@ -91,9 +92,9 @@ class SQLAlchemyRepository(IRepository[DomainEntity, ID], Generic[ORMModel, Doma
     async def delete(self, entity_id: ID) -> bool:
         """Delete an entity by id."""
         try:
-            stmt = delete(self.model_cls).where(getattr(self.model_cls, "id") == entity_id)
+            stmt = delete(self.model_cls).where(cast("Any", self.model_cls).id == entity_id)
             result = await self.session.execute(stmt)
-            return bool(result.rowcount > 0)
+            return bool(cast("Any", result).rowcount > 0)
         except Exception as exc:
             raise DatabaseError(f"Error deleting {self.model_cls.__name__}", cause=exc) from exc
 

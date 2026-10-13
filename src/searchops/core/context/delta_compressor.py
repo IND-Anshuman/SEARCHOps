@@ -7,14 +7,15 @@ between state iterations (N-1 vs N) to compress prompt sizes for multi-hop agent
 
 from __future__ import annotations
 
-from typing import Any, Protocol
+from typing import TYPE_CHECKING, Any, Protocol
+
 import structlog
 from pydantic import BaseModel, Field
 
-from searchops.knowledge.domain.entity import KGEntity, KGRelation
 from searchops.llm.tokenizer import count_tokens
-from searchops.orchestration.states.research_state import ResearchState
-from searchops.search.contracts import SearchResultItem
+
+if TYPE_CHECKING:
+    from searchops.orchestration.states.research_state import ResearchState
 
 log = structlog.get_logger(__name__)
 
@@ -39,8 +40,7 @@ class IContextCompressor(Protocol):
         base_state: ResearchState | None,
         current_state: ResearchState,
         max_delta_tokens: int = 1500,
-    ) -> CompressedContextDelta:
-        ...
+    ) -> CompressedContextDelta: ...
 
 
 class ContextDeltaCompressor:
@@ -86,7 +86,8 @@ class ContextDeltaCompressor:
             }
             for r in curr_relations
             if hasattr(r, "relation_type")
-            and f"{r.source_canonical_id or r.source_id}:{r.relation_type}:{r.target_canonical_id or r.target_id}" not in base_rel_keys
+            and f"{r.source_canonical_id or r.source_id}:{r.relation_type}:{r.target_canonical_id or r.target_id}"
+            not in base_rel_keys
         ]
 
         delta_search = [
@@ -97,7 +98,9 @@ class ContextDeltaCompressor:
 
         # Calculate Full Prompt vs Delta Prompt Token Comparison
         full_text = f"Entities: {curr_entities}\nRelations: {curr_relations}\nSearch: {curr_search}"
-        delta_text = f"Delta Entities: {delta_entities}\nDelta Relations: {delta_relations}\nDelta Search: {delta_search}"
+        delta_text = (
+            f"Delta Entities: {delta_entities}\nDelta Relations: {delta_relations}\nDelta Search: {delta_search}"
+        )
 
         full_tokens = max(1, count_tokens(full_text, self.model_name))
         delta_tokens = count_tokens(delta_text, self.model_name)

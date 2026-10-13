@@ -55,9 +55,7 @@ class PlaywrightScraper(IScraper):
                 metadata={"error": str(exc)},
             )
 
-    async def scrape_many(
-        self, requests: list[ScrapeRequest], *, max_concurrency: int = 5
-    ) -> list[ScrapeResult]:
+    async def scrape_many(self, requests: list[ScrapeRequest], *, max_concurrency: int = 5) -> list[ScrapeResult]:
         """Scrape multiple URLs concurrently via Playwright."""
         import asyncio
 
@@ -73,8 +71,8 @@ class PlaywrightScraper(IScraper):
     async def health_check(self) -> bool:
         """Return True if Playwright dependency is available."""
         try:
-            import playwright  # type: ignore[import]
-            return True
-        except ImportError:
-            return False
+            import importlib.util
 
+            return importlib.util.find_spec("playwright") is not None
+        except (ImportError, ValueError):
+            return False

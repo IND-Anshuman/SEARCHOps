@@ -42,7 +42,7 @@ log = structlog.get_logger(__name__)
 try:
     import fitz  # PyMuPDF for rendering PDF pages as images
 except ImportError:  # pragma: no cover
-    fitz = None  # type: ignore[assignment]
+    fitz = None
 
 try:
     import httpx
@@ -53,6 +53,7 @@ except ImportError:  # pragma: no cover
 # ---------------------------------------------------------------------------
 # VisionIngestionEngine
 # ---------------------------------------------------------------------------
+
 
 class VisionIngestionEngine:
     """
@@ -70,7 +71,6 @@ class VisionIngestionEngine:
         self.api_key = api_key or (getattr(llm_cfg, "api_key", "") if llm_cfg else "")
         self.model_name = model_name
         self.dpi = dpi
-
 
     def render_pdf_to_images(
         self,
@@ -207,4 +207,3 @@ class VisionIngestionEngine:
 def build_vision_engine(api_key: str | None = None) -> VisionIngestionEngine:
     """Factory function for VisionIngestionEngine."""
     return VisionIngestionEngine(api_key=api_key)
-

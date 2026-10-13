@@ -4,12 +4,12 @@ Prompt Platform Domain Models: PromptDefinition, PromptVersion, PromptBudget.
 
 from __future__ import annotations
 
-from typing import Any
-from pydantic import BaseModel, Field
+from pydantic import BaseModel
 
 
 class PromptVersion(BaseModel):
     """Semantic version identifier for prompts (e.g. planner:v1.0)."""
+
     name: str
     version: str = "v1.0"
 
@@ -19,6 +19,7 @@ class PromptVersion(BaseModel):
 
 class PromptDefinition(BaseModel):
     """Metadata definition for a versioned prompt in the PromptRegistry."""
+
     name: str
     version: str = "v1.0"
     owner: str = "platform-team"
@@ -38,6 +39,7 @@ class PromptDefinition(BaseModel):
 
 class PromptBudget(BaseModel):
     """Granular token budget breakdown per compiled prompt invocation."""
+
     system_tokens: int = 0
     user_tokens: int = 0
     context_tokens: int = 0
@@ -53,6 +55,7 @@ class PromptBudget(BaseModel):
 
 class PromptCompileResult(BaseModel):
     """Result of compiling a PromptDefinition with variable arguments."""
+
     prompt_key: str
     system_prompt: str
     user_prompt: str

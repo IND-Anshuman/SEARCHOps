@@ -5,6 +5,7 @@ Tavily Search Provider Implementation.
 from __future__ import annotations
 
 from typing import Any
+
 import httpx
 import structlog
 
@@ -46,7 +47,7 @@ class TavilySearchProvider(ISearchProvider):
             log.warning("Tavily API key not configured — skipping provider")
             return []
 
-        clean_query = query.query.replace('"', '').strip()
+        clean_query = query.query.replace('"', "").strip()
         if not clean_query:
             log.warning("Tavily query empty — skipping search")
             return []
@@ -72,7 +73,11 @@ class TavilySearchProvider(ISearchProvider):
                     json=payload,
                 )
                 if resp.status_code != 200:
-                    log.error("Tavily search API returned error", status=resp.status_code, body=resp.text[:200])
+                    log.error(
+                        "Tavily search API returned error",
+                        status=resp.status_code,
+                        body=resp.text[:200],
+                    )
                     return []
 
                 results = resp.json().get("results", [])

@@ -3,6 +3,7 @@ Error response schemas.
 
 Follows RFC 7807 (Problem Details for HTTP APIs).
 """
+
 from __future__ import annotations
 
 from typing import Any
@@ -14,7 +15,7 @@ from searchops.shared.contracts.base import BaseSchema
 
 class FieldError(BaseSchema):
     """A validation error on a specific field."""
-    
+
     field: str = Field(description="Dot-separated field path (e.g., 'user.email')")
     message: str = Field(description="Human-readable error message")
     code: str = Field(description="Machine-readable error code")
@@ -22,7 +23,7 @@ class FieldError(BaseSchema):
 
 class ErrorDetail(BaseSchema):
     """Detailed error information (RFC 7807 Problem Detail)."""
-    
+
     type: str = Field(description="URI reference identifying the problem type")
     title: str = Field(description="Short, human-readable summary")
     status: int = Field(description="HTTP status code")
@@ -36,5 +37,5 @@ class ErrorDetail(BaseSchema):
 
 class ErrorResponse(BaseSchema):
     """Standard error response envelope."""
-    
+
     error: ErrorDetail

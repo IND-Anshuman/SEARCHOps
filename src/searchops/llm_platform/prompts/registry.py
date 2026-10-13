@@ -4,9 +4,12 @@ Centralized PromptRegistry managing versioned PromptDefinitions.
 
 from __future__ import annotations
 
+from typing import TYPE_CHECKING
+
 import structlog
 
-from searchops.llm_platform.prompts.models import PromptDefinition
+if TYPE_CHECKING:
+    from searchops.llm_platform.prompts.models import PromptDefinition
 
 log = structlog.get_logger(__name__)
 
@@ -31,7 +34,7 @@ class PromptRegistry:
 
     def list_prompts(self) -> list[str]:
         """List all registered prompt keys."""
-        return sorted(list(self._prompts.keys()))
+        return sorted(self._prompts.keys())
 
 
 # Global singleton instance

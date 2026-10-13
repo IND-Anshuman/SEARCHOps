@@ -65,9 +65,7 @@ async def ranker_node(state: ResearchState) -> ResearchState:
     search_results = state.get("search_results", [])
     scrape_plan = state.get("scrape_plan") or {}
     req_pages = (
-        scrape_plan.get("max_pages", 15)
-        if isinstance(scrape_plan, dict)
-        else getattr(scrape_plan, "max_pages", 15)
+        scrape_plan.get("max_pages", 15) if isinstance(scrape_plan, dict) else getattr(scrape_plan, "max_pages", 15)
     )
     max_sources = max(state.get("max_sources", 10), req_pages)
 

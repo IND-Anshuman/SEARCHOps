@@ -4,17 +4,18 @@ Base Pydantic schemas for all API contracts.
 All request and response schemas should inherit from these base classes
 to ensure consistent serialization, validation, and documentation.
 """
+
 from __future__ import annotations
 
 import uuid
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 
 from pydantic import BaseModel, ConfigDict, Field
 
 
 class BaseSchema(BaseModel):
     """Root schema with consistent config for all platform schemas."""
-    
+
     model_config = ConfigDict(
         # Use enum values (not names) in JSON
         use_enum_values=True,
@@ -33,7 +34,7 @@ class BaseSchema(BaseModel):
 
 class BaseRequest(BaseSchema):
     """Base class for all API request schemas."""
-    
+
     request_id: str = Field(
         default_factory=lambda: str(uuid.uuid4()),
         description="Client-generated request identifier for idempotency",
@@ -42,12 +43,12 @@ class BaseRequest(BaseSchema):
 
 class BaseResponse(BaseSchema):
     """Base class for all API response schemas."""
-    
+
     request_id: str | None = Field(
         default=None,
         description="Echo of the client request ID",
     )
     timestamp: datetime = Field(
-        default_factory=lambda: datetime.now(timezone.utc),
+        default_factory=lambda: datetime.now(UTC),
         description="UTC timestamp when the response was generated",
     )

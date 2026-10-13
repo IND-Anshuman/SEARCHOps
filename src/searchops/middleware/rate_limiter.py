@@ -8,12 +8,14 @@ sliding window rate limits per client IP or API Key.
 from __future__ import annotations
 
 import time
-from typing import Any, Callable
+from typing import TYPE_CHECKING, Any
 
 import structlog
 from starlette.middleware.base import BaseHTTPMiddleware, RequestResponseEndpoint
-from starlette.requests import Request
 from starlette.responses import JSONResponse, Response
+
+if TYPE_CHECKING:
+    from starlette.requests import Request
 
 log = structlog.get_logger(__name__)
 
@@ -71,7 +73,13 @@ class RateLimiterMiddleware(BaseHTTPMiddleware):
 
     async def dispatch(self, request: Request, call_next: RequestResponseEndpoint) -> Response:
         path = request.url.path
-        if request.method == "OPTIONS" or path.startswith("/health") or path.startswith("/docs") or path.startswith("/redoc") or path == "/openapi.json":
+        if (
+            request.method == "OPTIONS"
+            or path.startswith("/health")
+            or path.startswith("/docs")
+            or path.startswith("/redoc")
+            or path == "/openapi.json"
+        ):
             return await call_next(request)
 
         client_key = request.headers.get("X-API-Key") or (request.client.host if request.client else "unknown")

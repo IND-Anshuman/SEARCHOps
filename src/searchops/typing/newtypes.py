@@ -5,6 +5,7 @@ NewTypes are checked by mypy but have zero runtime overhead.
 They make function signatures self-documenting and prevent
 accidental argument transposition.
 """
+
 from __future__ import annotations
 
 from typing import NewType

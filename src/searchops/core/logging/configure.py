@@ -19,14 +19,12 @@ import sys
 from typing import Any
 
 import structlog
-from structlog.types import EventDict, WrappedLogger
 
 from searchops.core.logging.processors import (
     add_correlation_id,
     add_open_telemetry_ids,
     redact_sensitive_fields,
 )
-
 
 _CONFIGURED = False
 

@@ -26,7 +26,11 @@ class AdaptiveBudgetManager:
             truncated_content = truncate_by_tokens(content, 400, model_name=model_name)
             compressed_excerpts.append({**doc, "content": truncated_content})
 
-        log.info("Compressed context for prompt budget", model=model_name, max_tokens=self.max_context_tokens)
+        log.info(
+            "Compressed context for prompt budget",
+            model=model_name,
+            max_tokens=self.max_context_tokens,
+        )
         return AssembledContext(
             query=context.query,
             graph_entities=context.graph_entities[:10],

@@ -7,7 +7,7 @@ Tier A — PyMuPDF Fast Path (~150 pages/sec)
     For digital PDFs with native text streams.  Extracts text blocks page-by-page
     and returns clean Markdown.  Zero ML inference cost.
 
-Tier B — Docling CPU Layout Transformer (~1–2 pages/sec)
+Tier B — Docling CPU Layout Transformer (~1-2 pages/sec)
     IBM Docling with Table Transformer (TATR) running on CPU via PyTorch.
     Handles multi-column layouts, borderless table recovery, and reading-order
     reconstruction.  Used when PyMuPDF probe finds < 100 chars/page (scanned/complex).
@@ -54,12 +54,15 @@ from __future__ import annotations
 import asyncio
 import io
 import time
-from pathlib import Path
-from typing import Any
+from contextlib import suppress
+from typing import TYPE_CHECKING, Any
 
 import structlog
 
 from searchops.core.interfaces.scraper import IScraper, ScrapeMode, ScrapeRequest, ScrapeResult
+
+if TYPE_CHECKING:
+    from pathlib import Path
 
 log = structlog.get_logger(__name__)
 
@@ -68,7 +71,7 @@ log = structlog.get_logger(__name__)
 # ---------------------------------------------------------------------------
 
 _CHARS_PER_PAGE_THRESHOLD = 100  # Below → route to Docling layout transformer
-_MAX_PAGES_PYMUPDF        = 2000  # Safety cap for very large PDFs
+_MAX_PAGES_PYMUPDF = 2000  # Safety cap for very large PDFs
 
 # ---------------------------------------------------------------------------
 # Module-level lazy imports (so unittest.mock.patch() can intercept them)
@@ -76,12 +79,14 @@ _MAX_PAGES_PYMUPDF        = 2000  # Safety cap for very large PDFs
 
 try:
     import fitz as _fitz  # PyMuPDF
+
     fitz = _fitz
 except ImportError:  # pragma: no cover
-    fitz = None  # type: ignore[assignment]
+    fitz = None
 
 try:
     import duckdb as _duckdb
+
     duckdb = _duckdb
 except ImportError:  # pragma: no cover
     duckdb = None  # type: ignore[assignment]
@@ -90,6 +95,7 @@ except ImportError:  # pragma: no cover
 # ---------------------------------------------------------------------------
 # TableStore — DuckDB wrapper
 # ---------------------------------------------------------------------------
+
 
 class TableStore:
     """
@@ -135,7 +141,7 @@ class TableStore:
         registered = []
         for i, table in enumerate(tables):
             headers = table.get("headers")
-            rows    = table.get("rows")
+            rows = table.get("rows")
             if not headers or rows is None:
                 continue
             name = f"table_{i}"
@@ -168,12 +174,10 @@ class TableStore:
 
     def close(self) -> None:
         """Close the underlying DuckDB connection."""
-        try:
+        with suppress(Exception):  # pragma: no cover
             self._conn.close()
-        except Exception:  # pragma: no cover
-            pass
 
-    def __enter__(self) -> "TableStore":
+    def __enter__(self) -> TableStore:
         return self
 
     def __exit__(self, *_: Any) -> None:
@@ -183,6 +187,7 @@ class TableStore:
 # ---------------------------------------------------------------------------
 # DocumentIngestionEngine
 # ---------------------------------------------------------------------------
+
 
 class DocumentIngestionEngine:
     """
@@ -194,7 +199,7 @@ class DocumentIngestionEngine:
        digital PDFs with native text.  ~150 pages/sec.
 
     2. **Docling CPU layout transformer** (``parser_used="docling_cpu"``) —
-       multi-column, borderless tables, complex layouts.  ~1–2 pages/sec on CPU.
+       multi-column, borderless tables, complex layouts.  ~1-2 pages/sec on CPU.
 
     3. **PyMuPDF fallback** (``parser_used="pymupdf_fallback"``) —
        when Docling is disabled or source is raw bytes (no path for Docling).
@@ -206,8 +211,8 @@ class DocumentIngestionEngine:
     """
 
     def __init__(self, *, use_docling: bool = True) -> None:
-        self._use_docling         = use_docling
-        self._docling_converter   = None  # Lazy init (heavy import + torch load)
+        self._use_docling = use_docling
+        self._docling_converter: Any = None  # Lazy init (heavy import + torch load)
 
     # ------------------------------------------------------------------ #
     #  Public API                                                           #
@@ -235,12 +240,13 @@ class DocumentIngestionEngine:
         if fitz is None:  # pragma: no cover
             raise RuntimeError("PyMuPDF is not installed. Run: uv add 'pymupdf>=1.24.0'")
 
-        is_bytes  = isinstance(source, bytes)
+        is_bytes = isinstance(source, bytes)
         source_path: str | None = None
 
         # Open the PDF
         if is_bytes:
-            doc = fitz.open(stream=io.BytesIO(source), filetype="pdf")
+            raw_bytes = source if isinstance(source, bytes) else bytes(str(source), "utf-8")
+            doc = fitz.open(stream=io.BytesIO(raw_bytes), filetype="pdf")
         else:
             source_path = str(source)
             doc = fitz.open(source_path)
@@ -248,10 +254,7 @@ class DocumentIngestionEngine:
         page_count = min(len(doc), _MAX_PAGES_PYMUPDF)
 
         # Probe: count native text characters across all pages
-        total_chars = sum(
-            len(doc[i].get_text("text"))
-            for i in range(page_count)
-        )
+        total_chars = sum(len(doc[i].get_text("text")) for i in range(page_count))
         chars_per_page = total_chars / max(page_count, 1)
         has_native_text = chars_per_page >= _CHARS_PER_PAGE_THRESHOLD
 
@@ -282,7 +285,7 @@ class DocumentIngestionEngine:
         tables: list[dict[str, Any]],
         *,
         db_path: str = ":memory:",
-    ) -> "TableStore":
+    ) -> TableStore:
         """
         Register extracted tables into a :class:`TableStore` for SQL querying.
 
@@ -316,9 +319,9 @@ class DocumentIngestionEngine:
                 blocks.append(f"<!-- Page {i + 1} -->\n\n{text}")
 
         return {
-            "markdown":    "\n\n---\n\n".join(blocks),
-            "tables":      [],
-            "page_count":  page_count,
+            "markdown": "\n\n---\n\n".join(blocks),
+            "tables": [],
+            "page_count": page_count,
             "parser_used": "pymupdf_fast_stream",
         }
 
@@ -338,11 +341,7 @@ class DocumentIngestionEngine:
 
         Reading order may be imperfect on complex multi-column layouts.
         """
-        reason = (
-            "raw-bytes input (Docling requires file path)"
-            if is_bytes
-            else "docling disabled"
-        )
+        reason = "raw-bytes input (Docling requires file path)" if is_bytes else "docling disabled"
         log.info("document_engine.pymupdf_fallback", reason=reason)
 
         blocks: list[str] = []
@@ -354,9 +353,9 @@ class DocumentIngestionEngine:
 
         parser = "pymupdf_bytes_fallback" if is_bytes else "pymupdf_fallback"
         return {
-            "markdown":    "\n\n---\n\n".join(blocks),
-            "tables":      [],
-            "page_count":  page_count,
+            "markdown": "\n\n---\n\n".join(blocks),
+            "tables": [],
+            "page_count": page_count,
             "parser_used": parser,
         }
 
@@ -369,25 +368,27 @@ class DocumentIngestionEngine:
         - Borderless table detection via Table Transformer (TATR)
         - Scanned PDFs (without OCR — CPU OCR is too slow)
 
-        Performance: ~1–2 pages/sec on CPU.  Suitable for small/medium PDFs
+        Performance: ~1-2 pages/sec on CPU.  Suitable for small/medium PDFs
         (< 50 pages) in production; large PDFs should use the fast path.
         """
         log.info("document_engine.docling_start", source=source_path, pages=page_count)
         try:
             converter = self._get_docling_converter()
-            result    = converter.convert(source_path)
-            markdown  = result.document.export_to_markdown()
+            result = converter.convert(source_path)
+            markdown = result.document.export_to_markdown()
 
             # Extract tables as structured dicts
             tables: list[dict[str, Any]] = []
             for tbl in result.document.tables:
                 try:
                     df = tbl.export_to_dataframe()
-                    tables.append({
-                        "headers": list(df.columns),
-                        "rows":    df.values.tolist(),
-                        "shape":   list(df.shape),
-                    })
+                    tables.append(
+                        {
+                            "headers": list(df.columns),
+                            "rows": df.values.tolist(),
+                            "shape": list(df.shape),
+                        }
+                    )
                 except Exception as exc:
                     log.warning("document_engine.table_export_failed", error=str(exc))
 
@@ -397,18 +398,18 @@ class DocumentIngestionEngine:
                 tables_found=len(tables),
             )
             return {
-                "markdown":    markdown,
-                "tables":      tables,
-                "page_count":  page_count,
+                "markdown": markdown,
+                "tables": tables,
+                "page_count": page_count,
                 "parser_used": "docling_cpu",
             }
 
         except Exception as exc:
             log.error("document_engine.docling_error", source=source_path, error=str(exc))
             return {
-                "markdown":    f"<!-- Docling parse failed: {exc} -->",
-                "tables":      [],
-                "page_count":  page_count,
+                "markdown": f"<!-- Docling parse failed: {exc} -->",
+                "tables": [],
+                "page_count": page_count,
                 "parser_used": "docling_error",
             }
 
@@ -421,19 +422,17 @@ class DocumentIngestionEngine:
         - Table structure enabled (TATR via PyTorch CPU)
         """
         if self._docling_converter is None:
-            from docling.document_converter import DocumentConverter, PdfFormatOption
             from docling.datamodel.base_models import InputFormat
             from docling.datamodel.pipeline_options import PdfPipelineOptions
+            from docling.document_converter import DocumentConverter, PdfFormatOption
 
             pipe_opts = PdfPipelineOptions()
-            pipe_opts.do_ocr               = False
-            pipe_opts.do_table_structure   = True
-            pipe_opts.table_structure_options.use_ocr_for_table = False
+            pipe_opts.do_ocr = False
+            pipe_opts.do_table_structure = True
+            pipe_opts.table_structure_options.use_ocr_for_table = False  # type: ignore[attr-defined]
 
             self._docling_converter = DocumentConverter(
-                format_options={
-                    InputFormat.PDF: PdfFormatOption(pipeline_options=pipe_opts)
-                }
+                format_options={InputFormat.PDF: PdfFormatOption(pipeline_options=pipe_opts)}
             )
             log.debug("document_engine.docling_converter_ready")
 
@@ -443,6 +442,7 @@ class DocumentIngestionEngine:
 # ---------------------------------------------------------------------------
 # PdfScraper — IScraper adapter for pipeline integration
 # ---------------------------------------------------------------------------
+
 
 class PdfScraper(IScraper):
     """
@@ -477,7 +477,7 @@ class PdfScraper(IScraper):
         use_docling: bool = True,
         download_timeout: float = 60.0,
     ) -> None:
-        self._engine          = engine or DocumentIngestionEngine(use_docling=use_docling)
+        self._engine = engine or DocumentIngestionEngine(use_docling=use_docling)
         self._download_timeout = download_timeout
 
     async def scrape(self, request: ScrapeRequest) -> ScrapeResult:
@@ -505,7 +505,7 @@ class PdfScraper(IScraper):
             )
 
         try:
-            parsed  = self._engine.parse_pdf(pdf_bytes)
+            parsed = self._engine.parse_pdf(pdf_bytes)
             elapsed = round((time.perf_counter() - start) * 1000, 1)
 
             # Serialise tables for JSON transport (stored in metadata)
@@ -529,8 +529,8 @@ class PdfScraper(IScraper):
                 duration_ms=elapsed,
                 metadata={
                     "parser_used": parsed.get("parser_used"),
-                    "page_count":  parsed.get("page_count"),
-                    "tables":      tables,
+                    "page_count": parsed.get("page_count"),
+                    "tables": tables,
                     "char_density": parsed.get("char_density", 0.0),
                 },
             )
@@ -593,6 +593,7 @@ class PdfScraper(IScraper):
 # Helpers
 # ---------------------------------------------------------------------------
 
+
 def is_pdf_url(url: str) -> bool:
     """
     Heuristically detect whether *url* points to a PDF document.
@@ -614,6 +615,7 @@ def is_pdf_url(url: str) -> bool:
         False
     """
     from urllib.parse import urlparse
+
     path = urlparse(url).path.lower()
     return path.endswith(".pdf")
 

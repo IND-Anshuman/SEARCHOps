@@ -20,6 +20,8 @@ Free-tier protections applied on every call:
 
 from __future__ import annotations
 
+import re
+import time
 from typing import TYPE_CHECKING, Any
 
 import structlog
@@ -274,7 +276,45 @@ class LLMRouter:
                 unique_models.append(m)
 
         last_exception: Exception | None = None
-        for active_model in unique_models:
+        # A model that fails with a permanent error (410 Gone, unknown model,
+        # invalid key) is skipped for the rest of the process lifetime. Without
+        # this, a dead model costs a full round trip on EVERY call — and a
+        # sectioned report makes 9 calls, so one dead entry in the chain
+        # silently multiplies into 9 wasted requests per report.
+        self._dead_models: set[str] = getattr(self, "_dead_models", set())
+        self._dead_until: dict[str, float] = getattr(self, "_dead_until", {})
+
+        def _is_permanent(msg: str) -> bool:
+            low = msg.lower()
+            return any(
+                t in low
+                for t in (
+                    "410",
+                    "gone",
+                    "does not exist",
+                    "not found",
+                    "invalid api key",
+                    "incorrect api key",
+                    "unsupported model",
+                    "unknown model",
+                    "no such model",
+                    "401",
+                )
+            )
+
+        def _is_rate_limit(msg: str) -> bool:
+            low = msg.lower()
+            return any(t in low for t in ("429", "resource_exhausted", "rate limit", "quota"))
+
+        now = time.time()
+        for active_model in list(unique_models):
+            # Skip permanently-dead models; honour a temporary backoff for
+            # rate-limited ones so the cascade moves straight to a live model.
+            if active_model in self._dead_models:
+                continue
+            cooldown = self._dead_until.get(active_model, 0.0)
+            if cooldown > now:
+                continue
             active_provider = self._resolve_provider_label(active_model)
             try:
                 chat_model = self._get_model(active_model, temperature, max_tokens)
@@ -332,11 +372,35 @@ class LLMRouter:
             except Exception as exc:
                 last_exception = exc
                 LLM_REQUESTS_TOTAL.labels(provider=active_provider, model=active_model, status="error").inc()
+                err_text = str(exc)
+                if _is_permanent(err_text):
+                    # Retired for the rest of the process — a model that has
+                    # reached end of life will not come back.
+                    self._dead_models.add(active_model)
+                    log.warning(
+                        "LLM model retired permanently; skipping on all later calls",
+                        model=active_model,
+                        provider=active_provider,
+                    )
+                elif _is_rate_limit(err_text):
+                    # Honour the provider's own retry hint when present, else
+                    # back off briefly, so the cascade tries a live model first.
+                    retry_secs = 300.0
+                    retry_match = re.search(r"retry in (\d+)m", err_text, re.IGNORECASE)
+                    if retry_match:
+                        retry_secs = min(float(retry_match.group(1)) * 60.0, 3600.0)
+                    self._dead_until[active_model] = time.time() + retry_secs
+                    log.warning(
+                        "LLM model rate-limited; backing off",
+                        model=active_model,
+                        provider=active_provider,
+                        backoff_seconds=int(retry_secs),
+                    )
                 log.warning(
                     "LLM model call failed, trying fallback cascade",
                     model=active_model,
                     provider=active_provider,
-                    error=str(exc),
+                    error=err_text,
                 )
 
         log.error(

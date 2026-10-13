@@ -13,11 +13,11 @@ API docs: https://docs.brightdata.com/scraping-automation/serp-api
 
 from __future__ import annotations
 
-import structlog
 import urllib.parse
 from typing import Any
 
 import httpx
+import structlog
 
 from searchops.config.settings import Settings, get_settings
 from searchops.search.contracts import ISearchProvider, SearchQuery, SearchResultItem
@@ -42,9 +42,7 @@ class BrightDataSerpProvider(ISearchProvider):
         self._search_cfg = cfg.search
         self._scraping_cfg = cfg.scraping
         self._api_key: str | None = (
-            self._search_cfg.brightdata_api_key.get_secret_value()
-            if self._search_cfg.brightdata_api_key
-            else None
+            self._search_cfg.brightdata_api_key.get_secret_value() if self._search_cfg.brightdata_api_key else None
         )
         self._zone: str = self._search_cfg.brightdata_zone_serp
 
@@ -66,7 +64,7 @@ class BrightDataSerpProvider(ISearchProvider):
             SearchCapability.FRESHNESS,
             SearchCapability.LOCALIZATION,
             SearchCapability.SERP_FEATURES,  # PAA + KG
-            SearchCapability.ANTI_BOT,        # Residential IP rotation
+            SearchCapability.ANTI_BOT,  # Residential IP rotation
         }
 
     @property
@@ -130,21 +128,15 @@ class BrightDataSerpProvider(ISearchProvider):
     #  Response parsing                                                    #
     # ------------------------------------------------------------------ #
 
-    def _parse_response(
-        self, data: dict[str, Any], original_query: str
-    ) -> list[SearchResultItem]:
+    def _parse_response(self, data: dict[str, Any], original_query: str) -> list[SearchResultItem]:
         """Parse Bright Data SERP JSON into normalized SearchResultItems."""
         organic: list[dict[str, Any]] = data.get("organic", [])
         paa_raw: list[dict[str, Any]] = data.get("people_also_ask", [])
         knowledge_graph: dict[str, Any] = data.get("knowledge_graph", {})
-        related_searches: list[str] = [
-            r.get("query", "") for r in data.get("related_searches", [])
-        ]
+        related_searches: list[str] = [r.get("query", "") for r in data.get("related_searches", [])]
 
         # Extract PAA sub-queries for recursive deep-search expansion
-        paa_subqueries: list[str] = [
-            item.get("question", "") for item in paa_raw if item.get("question")
-        ]
+        paa_subqueries: list[str] = [item.get("question", "") for item in paa_raw if item.get("question")]
 
         items: list[SearchResultItem] = []
         for rank, item in enumerate(organic, start=1):

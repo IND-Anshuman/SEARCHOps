@@ -13,11 +13,13 @@ This module is called ONCE during bootstrap. All other modules call
 
 from __future__ import annotations
 
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Any
 
 import structlog
 
 if TYPE_CHECKING:
+    from collections.abc import Callable
+
     from opentelemetry.sdk.trace import TracerProvider
 
 log = structlog.get_logger(__name__)
@@ -53,8 +55,8 @@ def setup_tracer_provider(
         return
 
     if not enabled:
-        from opentelemetry.sdk.trace import TracerProvider as SDKTracerProvider
         from opentelemetry import trace
+        from opentelemetry.sdk.trace import TracerProvider as SDKTracerProvider
 
         _provider = SDKTracerProvider()
         trace.set_tracer_provider(_provider)
@@ -63,10 +65,10 @@ def setup_tracer_provider(
 
     try:
         from opentelemetry import trace
-        from opentelemetry.sdk.resources import Resource, SERVICE_NAME, SERVICE_VERSION
+        from opentelemetry.sdk.resources import SERVICE_NAME, SERVICE_VERSION, Resource
         from opentelemetry.sdk.trace import TracerProvider as SDKTracerProvider
         from opentelemetry.sdk.trace.export import BatchSpanProcessor
-        from opentelemetry.sdk.trace.sampling import TraceIdRatioBased, ParentBased
+        from opentelemetry.sdk.trace.sampling import ParentBased, TraceIdRatioBased
 
         resource = Resource.create(
             {
@@ -82,14 +84,16 @@ def setup_tracer_provider(
         # ── Exporter selection ────────────────────────────────────────────
         if otlp_protocol == "grpc":
             from opentelemetry.exporter.otlp.proto.grpc.trace_exporter import (
-                OTLPSpanExporter,
+                OTLPSpanExporter as OTLPGrpcSpanExporter,
             )
-            exporter = OTLPSpanExporter(endpoint=otlp_endpoint, insecure=True)
+
+            exporter: Any = OTLPGrpcSpanExporter(endpoint=otlp_endpoint, insecure=True)
         else:
             from opentelemetry.exporter.otlp.proto.http.trace_exporter import (
-                OTLPSpanExporter,
+                OTLPSpanExporter as OTLPHTTPSpanExporter,
             )
-            exporter = OTLPSpanExporter(endpoint=otlp_endpoint)
+
+            exporter = OTLPHTTPSpanExporter(endpoint=otlp_endpoint)
 
         provider.add_span_processor(BatchSpanProcessor(exporter))
 
@@ -109,14 +113,14 @@ def setup_tracer_provider(
             "Failed to initialize OTel tracer provider — falling back to NoOp",
             error=str(exc),
         )
-        from opentelemetry.sdk.trace import TracerProvider as SDKTracerProvider
         from opentelemetry import trace
+        from opentelemetry.sdk.trace import TracerProvider as SDKTracerProvider
 
         _provider = SDKTracerProvider()
         trace.set_tracer_provider(_provider)
 
 
-def get_tracer(name: str) -> "opentelemetry.trace.Tracer":  # type: ignore[name-defined]
+def get_tracer(name: str) -> object:  # returns opentelemetry.trace.Tracer
     """Return a tracer for the given instrumentation scope.
 
     Args:
@@ -144,7 +148,7 @@ def setup_auto_instrumentation() -> None:
     _try_instrument("AsyncPG", _instrument_asyncpg)
 
 
-def _try_instrument(name: str, fn: "Callable[[], None]") -> None:  # type: ignore[name-defined]
+def _try_instrument(name: str, fn: Callable[[], None]) -> None:
     try:
         fn()
         log.debug("Auto-instrumented", library=name)
@@ -154,24 +158,29 @@ def _try_instrument(name: str, fn: "Callable[[], None]") -> None:  # type: ignor
 
 def _instrument_fastapi() -> None:
     from opentelemetry.instrumentation.fastapi import FastAPIInstrumentor
+
     FastAPIInstrumentor().instrument()
 
 
 def _instrument_httpx() -> None:
     from opentelemetry.instrumentation.httpx import HTTPXClientInstrumentor
+
     HTTPXClientInstrumentor().instrument()
 
 
 def _instrument_sqlalchemy() -> None:
     from opentelemetry.instrumentation.sqlalchemy import SQLAlchemyInstrumentor
+
     SQLAlchemyInstrumentor().instrument()
 
 
 def _instrument_redis() -> None:
     from opentelemetry.instrumentation.redis import RedisInstrumentor
+
     RedisInstrumentor().instrument()
 
 
 def _instrument_asyncpg() -> None:
     from opentelemetry.instrumentation.asyncpg import AsyncPGInstrumentor
-    AsyncPGInstrumentor().instrument()
+
+    AsyncPGInstrumentor().instrument()  # type: ignore[no-untyped-call]

@@ -5,11 +5,15 @@ populates the initial ResearchPlan & ExecutionBudget.
 
 from __future__ import annotations
 
+from typing import TYPE_CHECKING
+
 import structlog
 
 from searchops.core.context.research import ExecutionBudget, ResearchPlan
-from searchops.llm.router import LLMRouter
-from searchops.orchestration.states.research_state import ResearchState
+
+if TYPE_CHECKING:
+    from searchops.llm.router import LLMRouter
+    from searchops.orchestration.states.research_state import ResearchState
 
 log = structlog.get_logger(__name__)
 
@@ -31,11 +35,7 @@ async def planner_node(state: ResearchState, *, llm_router: LLMRouter) -> Resear
     prompt = _PLANNER_PROMPT.format(query=query)
     response = await llm_router.generate(prompt=prompt, temperature=0.1)
 
-    sub_queries = [
-        line.lstrip("0123456789. ").strip()
-        for line in response.splitlines()
-        if line.strip()
-    ]
+    sub_queries = [line.lstrip("0123456789. ").strip() for line in response.splitlines() if line.strip()]
 
     plan = ResearchPlan(
         primary_query=query,
@@ -49,6 +49,4 @@ async def planner_node(state: ResearchState, *, llm_router: LLMRouter) -> Resear
     )
 
     log.info("Planner generated ResearchPlan", sub_query_count=len(sub_queries))
-    return {"iteration": 0, "plan": plan, "budget": budget}  # type: ignore[misc]
-
-
+    return {"iteration": 0, "plan": plan, "budget": budget}

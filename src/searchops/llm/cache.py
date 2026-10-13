@@ -5,11 +5,12 @@ Exact Match Response Cache for LLM Prompts.
 from __future__ import annotations
 
 import hashlib
-from typing import Any
+from typing import TYPE_CHECKING
 
 import structlog
 
-from searchops.core.interfaces.memory import ICache
+if TYPE_CHECKING:
+    from searchops.core.interfaces.memory import ICache
 
 log = structlog.get_logger(__name__)
 
@@ -47,4 +48,5 @@ class LLMResponseCache:
         """Cache prompt completion."""
         key = self._make_key(model_name, prompt, temperature)
         ttl = ttl_seconds or self.default_ttl_seconds
-        return await self.cache_backend.set(key, response_text, ttl_seconds=ttl)
+        res = await self.cache_backend.set(key, response_text, ttl_seconds=ttl)
+        return bool(res) if res is not None else True

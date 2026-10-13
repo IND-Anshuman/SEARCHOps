@@ -113,6 +113,7 @@ BD_HEALTH_CHECK_FAILURES = Counter(
 
 # ── Helper functions ──────────────────────────────────────────────────────────
 
+
 def record_bd_request(
     tier: str,
     outcome: str,
@@ -135,6 +136,4 @@ def record_bd_request(
     if cost_usd > 0:
         BD_SPEND_USD.labels(tier=tier).inc(cost_usd)
     if trigger_status is not None:
-        BD_FALLBACK_ACTIVATIONS.labels(
-            tier=tier, trigger_status=str(trigger_status)
-        ).inc()
+        BD_FALLBACK_ACTIVATIONS.labels(tier=tier, trigger_status=str(trigger_status)).inc()

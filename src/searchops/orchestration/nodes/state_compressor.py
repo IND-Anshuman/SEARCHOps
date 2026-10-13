@@ -7,11 +7,12 @@ knowledge extraction, replacing them with token-dense document summaries and str
 
 from __future__ import annotations
 
-from typing import Any, Protocol
+from typing import TYPE_CHECKING, Any, Protocol
+
 import structlog
 
-from searchops.llm.tokenizer import count_tokens
-from searchops.orchestration.states.research_state import ResearchState
+if TYPE_CHECKING:
+    from searchops.orchestration.states.research_state import ResearchState
 
 log = structlog.get_logger(__name__)
 
@@ -19,8 +20,7 @@ log = structlog.get_logger(__name__)
 class IStateOptimizer(Protocol):
     """Protocol for State Memory Compaction."""
 
-    async def optimize_state(self, state: ResearchState) -> ResearchState:
-        ...
+    async def optimize_state(self, state: ResearchState) -> ResearchState: ...
 
 
 class StateTokenOptimizer:
@@ -52,13 +52,15 @@ class StateTokenOptimizer:
                 lines = [line.strip() for line in raw_content.splitlines() if len(line.strip()) > 15]
                 snippets = lines[: self.max_snippets]
 
-            compacted.append({
-                "url": url,
-                "title": title,
-                "content": "",  # Prune raw text blob
-                "content_summary": summary,
-                "snippets": snippets,
-            })
+            compacted.append(
+                {
+                    "url": url,
+                    "title": title,
+                    "content": "",  # Prune raw text blob
+                    "content_summary": summary,
+                    "snippets": snippets,
+                }
+            )
 
         return compacted
 
@@ -66,7 +68,7 @@ class StateTokenOptimizer:
         """Execute state compaction over ResearchState."""
         scraped = state.get("scraped_contents", [])
         if not scraped:
-            return {}  # type: ignore[misc]
+            return {}
 
         initial_raw_bytes = sum(len(doc.get("content", "") or "") for doc in scraped)
         compacted = self.compact_scraped_contents(scraped)
@@ -84,7 +86,7 @@ class StateTokenOptimizer:
             savings_percent=f"{savings_percent}%",
         )
 
-        return {"scraped_contents": compacted}  # type: ignore[misc]
+        return {"scraped_contents": compacted}
 
 
 async def state_compressor_node(state: ResearchState) -> ResearchState:

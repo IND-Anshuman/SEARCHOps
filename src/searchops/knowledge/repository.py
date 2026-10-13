@@ -4,12 +4,17 @@ Neo4j Graph Database Repository Implementation with IGraphStore & Batched Cypher
 
 from __future__ import annotations
 
+from typing import TYPE_CHECKING, Any
+
 import structlog
-from neo4j import AsyncDriver
 
 from searchops.core.interfaces.storage import IGraphStore
 from searchops.infrastructure.graph.neo4j import get_neo4j_driver
-from searchops.knowledge.domain.entity import KGEntity, KGRelation
+
+if TYPE_CHECKING:
+    from neo4j import AsyncDriver
+
+    from searchops.knowledge.domain.entity import KGEntity, KGRelation
 
 log = structlog.get_logger(__name__)
 

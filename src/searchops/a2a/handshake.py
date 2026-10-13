@@ -4,13 +4,16 @@ A2A Handshake and Agent Lifecycle Manager.
 
 from __future__ import annotations
 
+from typing import TYPE_CHECKING
+
 import structlog
 
 from searchops.a2a.protocol.envelopes import AgentHandshakeRequest, AgentHandshakeResponse
 from searchops.core.interfaces.agent import AgentCapability, AgentCard
-from searchops.platform.registry.agent_registry import AgentRegistry
-from searchops.platform.registry.capability_registry import CapabilityRegistry
-from searchops.typing.aliases import AgentId
+
+if TYPE_CHECKING:
+    from searchops.platform.registry.agent_registry import AgentRegistry
+    from searchops.platform.registry.capability_registry import CapabilityRegistry
 
 log = structlog.get_logger(__name__)
 

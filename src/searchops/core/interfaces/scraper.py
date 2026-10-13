@@ -1,6 +1,7 @@
 """
 Scraper interface.
 """
+
 from __future__ import annotations
 
 import enum
@@ -12,20 +13,20 @@ from pydantic import BaseModel, Field
 class ScrapeMode(enum.StrEnum):
     """Scraping strategy — ordered from lightest to heaviest cost/latency."""
 
-    FIRECRAWL    = "firecrawl"      # Managed Firecrawl API ($$$, ~3–5s)
-    PLAYWRIGHT   = "playwright"      # Pooled headless browser (local, ~1.5s)
-    HTTP         = "http"            # Plain httpx (local, ~500ms, last resort)
-    STEALTH_HTTP = "stealth_http"    # curl_cffi BoringSSL JA4 bypass (local, ~150ms)
-    CRAWL4AI     = "crawl4ai"        # Local async AI crawler with BM25 pruning (~800ms)
-    DOCLING_PDF  = "docling_pdf"     # IBM Docling CPU layout transformer for PDFs
-    BD_UNLOCKER  = "bd_unlocker"     # Bright Data Web Unlocker — CAPTCHA bypass (~1–2s) PREMIUM
-    BD_BROWSER   = "bd_browser"      # Bright Data Cloud Scraping Browser CDP (~3–6s) PREMIUM
-    AUTO         = "auto"            # Let the pipeline decide based on target URL
+    FIRECRAWL = "firecrawl"  # Managed Firecrawl API ($$$, ~3-5s)
+    PLAYWRIGHT = "playwright"  # Pooled headless browser (local, ~1.5s)
+    HTTP = "http"  # Plain httpx (local, ~500ms, last resort)
+    STEALTH_HTTP = "stealth_http"  # curl_cffi BoringSSL JA4 bypass (local, ~150ms)
+    CRAWL4AI = "crawl4ai"  # Local async AI crawler with BM25 pruning (~800ms)
+    DOCLING_PDF = "docling_pdf"  # IBM Docling CPU layout transformer for PDFs
+    BD_UNLOCKER = "bd_unlocker"  # Bright Data Web Unlocker — CAPTCHA bypass (~1-2s) PREMIUM
+    BD_BROWSER = "bd_browser"  # Bright Data Cloud Scraping Browser CDP (~3-6s) PREMIUM
+    AUTO = "auto"  # Let the pipeline decide based on target URL
 
 
 class ScrapeRequest(BaseModel):
     """Request to scrape a URL."""
-    
+
     url: str = Field(description="URL to scrape")
     mode: ScrapeMode = Field(default=ScrapeMode.AUTO)
     wait_for_selector: str | None = Field(
@@ -38,6 +39,16 @@ class ScrapeRequest(BaseModel):
     extract_metadata: bool = Field(default=True)
     take_screenshot: bool = Field(default=False)
     headers: dict[str, str] = Field(default_factory=dict)
+    extract_schema: dict[str, Any] | None = Field(
+        default=None,
+        description=(
+            "Optional JSON Schema. When present, extraction targets these "
+            "fields directly so records come back typed and no later "
+            "structuring pass is needed. Absent means the ordinary "
+            "claim-extraction path. (Named extract_schema, not schema, to "
+            "avoid shadowing BaseModel.schema.)"
+        ),
+    )
     cache_ttl_seconds: int | None = Field(
         default=3600,
         description="Cache TTL. None disables caching for this request.",
@@ -47,7 +58,7 @@ class ScrapeRequest(BaseModel):
 
 class ScrapeResult(BaseModel):
     """Result of a scraping operation."""
-    
+
     url: str
     final_url: str = Field(description="URL after redirects")
     status_code: int
@@ -74,17 +85,15 @@ class ScrapeResult(BaseModel):
 @runtime_checkable
 class IScraper(Protocol):
     """Contract for all web scraping implementations."""
-    
+
     async def scrape(self, request: ScrapeRequest) -> ScrapeResult:
         """Scrape a URL and return structured content."""
         ...
-    
-    async def scrape_many(
-        self, requests: list[ScrapeRequest], *, max_concurrency: int = 5
-    ) -> list[ScrapeResult]:
+
+    async def scrape_many(self, requests: list[ScrapeRequest], *, max_concurrency: int = 5) -> list[ScrapeResult]:
         """Scrape multiple URLs concurrently."""
         ...
-    
+
     async def health_check(self) -> bool:
         """Return True if the scraper backend is operational."""
         ...

@@ -164,7 +164,14 @@ class ResearchApplicationService:
 
         if self.arq_pool:
             try:
-                await self.arq_pool.enqueue_job("background_research_job", job_id, query, depth, max_sources)
+                await self.arq_pool.enqueue_job(
+                    "background_research_job",
+                    job_id,
+                    query,
+                    depth,
+                    max_sources,
+                    plan.model_dump(mode="json"),
+                )
                 log.info("Research job enqueued to ARQ pool", job_id=job_id)
             except Exception as exc:
                 log.warning(
@@ -173,17 +180,13 @@ class ResearchApplicationService:
                     error=str(exc),
                 )
                 task = asyncio.create_task(
-                    self._execute_research(
-                        job_id, query, depth, max_sources, exec_ctx, plan.model_dump(mode="json")
-                    )
+                    self._execute_research(job_id, query, depth, max_sources, exec_ctx, plan.model_dump(mode="json"))
                 )
                 self._bg_tasks.add(task)
                 task.add_done_callback(self._bg_tasks.discard)
         else:
             task = asyncio.create_task(
-                self._execute_research(
-                    job_id, query, depth, max_sources, exec_ctx, plan.model_dump(mode="json")
-                )
+                self._execute_research(job_id, query, depth, max_sources, exec_ctx, plan.model_dump(mode="json"))
             )
             self._bg_tasks.add(task)
             task.add_done_callback(self._bg_tasks.discard)

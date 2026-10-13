@@ -1,19 +1,21 @@
 """
 AgentContext — metadata for a single A2A agent task execution.
 """
+
 from __future__ import annotations
 
 from dataclasses import dataclass, field
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
-from searchops.core.context.execution import ExecutionContext
-from searchops.typing.aliases import AgentId, TaskId
+if TYPE_CHECKING:
+    from searchops.core.context.execution import ExecutionContext
+    from searchops.typing.aliases import AgentId, TaskId
 
 
 @dataclass(slots=True)
 class AgentContext:
     """Context for a single agent task execution."""
-    
+
     execution_context: ExecutionContext
     agent_id: AgentId
     task_id: TaskId
@@ -22,12 +24,12 @@ class AgentContext:
     max_recursion_depth: int = 25
     tool_calls_made: int = 0
     metadata: dict[str, Any] = field(default_factory=dict)
-    
+
     @property
     def is_recursion_limit_reached(self) -> bool:
         """True if max recursion depth has been reached."""
         return self.recursion_depth >= self.max_recursion_depth
-    
+
     def increment_depth(self) -> AgentContext:
         """Return a new AgentContext with recursion depth incremented by one."""
         return AgentContext(

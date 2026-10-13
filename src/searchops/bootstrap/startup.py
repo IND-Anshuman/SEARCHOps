@@ -11,6 +11,7 @@ Design: Startup is SEQUENTIAL. Each step is isolated so failures are
 easily traceable. If Redis is unavailable, the server refuses to start
 rather than running in a degraded silent-failure state.
 """
+
 from __future__ import annotations
 
 import time
@@ -104,8 +105,7 @@ async def _verify_redis_connection(settings: object) -> None:
             error=str(exc),
         )
         raise RuntimeError(
-            f"Cannot start SEARCHOps: Redis is unreachable. "
-            f"Check REDIS_HOST / REDIS_PORT in .env. Error: {exc}"
+            f"Cannot start SEARCHOps: Redis is unreachable. Check REDIS_HOST / REDIS_PORT in .env. Error: {exc}"
         ) from exc
 
 

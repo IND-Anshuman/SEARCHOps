@@ -4,7 +4,8 @@ Deep Research LangGraph Compiled State Graph.
 Pipeline (post Wave-2 wiring):
 
   START → planner → search → ranker → scrape → extract_claims →
-         critic → verifier ──[gaps? & under loop cap]──→ gap_analyst → planner
+         extract_knowledge → critic → verifier
+                          ──[gaps? & under loop cap]──→ gap_analyst → planner
                           └─[no gaps | loop cap reached]─→ state_pruner → report_writer → END
 
 Reflection loop semantics:
@@ -33,6 +34,7 @@ from searchops.knowledge.extractor import EntityExtractor
 from searchops.llm.router import LLMRouter
 from searchops.orchestration.nodes.critic import critic_node
 from searchops.orchestration.nodes.extract_claims import extract_claims_node
+from searchops.orchestration.nodes.extract_knowledge import extract_knowledge_node
 from searchops.orchestration.nodes.gap_analyst import gap_analyst_node
 from searchops.orchestration.nodes.planner import planner_node
 from searchops.orchestration.nodes.ranker import ranker_node
@@ -53,6 +55,34 @@ _MAX_LOOPS = {
     ResearchDepth.STANDARD: 2,
     ResearchDepth.DEEP: 4,
 }
+
+# ── Single source of truth for node display metadata ──────────────────────────
+#
+# (node_id, label, frontend_node_type, prompt_template).
+#
+# `node_id` MUST match the id passed to graph.add_node() below — the API layer
+# keys its streamed node deltas by these ids and silently drops any that do not
+# match. `frontend_node_type` must be a member of the LangGraphNode.type union
+# in frontend/src/shared/types/workbench.ts, or the node renders untyped.
+#
+# Declared here, next to the graph itself, so the two cannot drift.
+# test_topology_contract.py enforces the match.
+GRAPH_TOPOLOGY: list[tuple[str, str, str, str]] = [
+    ("planner", "Planner Agent (Decomposition)", "planner", "system_planner_v4.2.jinja2"),
+    ("search", "Web Searcher (Serper/Tavily)", "search", "system_searcher_v3.1.jinja2"),
+    ("ranker", "Result Ranker", "extract", "system_ranker_v1.0.jinja2"),
+    ("scrape", "Deep Scraper (Firecrawl Engine)", "scrape", "system_scraper_v2.8.jinja2"),
+    ("extract_claims", "Claim Extractor (Typed Evidence)", "extract", "system_claims_v1.0.jinja2"),
+    ("extract_knowledge", "GraphRAG Extractor (Neo4j)", "graph_rag", "system_graphrag_v5.0.jinja2"),
+    ("critic", "Evidence Critic (Reflection)", "verify", "system_critic_v1.0.jinja2"),
+    ("verifier", "Fact Verifier (Grounding)", "verify", "system_verifier_v1.4.jinja2"),
+    ("gap_analyst", "Gap Analyst (Follow-up Queries)", "extract", "system_gap_analyst_v1.0.jinja2"),
+    ("state_pruner", "Context State Pruner", "extract", "system_state_pruner_v1.0.jinja2"),
+    ("report_writer", "Report Synthesis Writer", "report", "system_report_writer_v4.2.jinja2"),
+]
+
+# Ordered node ids, derived from the metadata above rather than restated.
+GRAPH_NODE_ORDER: list[str] = [entry[0] for entry in GRAPH_TOPOLOGY]
 
 
 def should_continue(state: ResearchState) -> str:
@@ -90,6 +120,9 @@ def build_deep_research_graph(
     _llm = llm_router or LLMRouter()
     _orch = orchestrator or aggregator or SearchOrchestrator()
     _pipe = scraping_pipeline or ScrapingPipeline()
+    # EntityExtractor only needs an LLM router, so it can always be built from
+    # the router the graph already resolved.
+    _extractor = extractor or EntityExtractor(_llm)
 
     graph = StateGraph(ResearchState)
 
@@ -99,6 +132,10 @@ def build_deep_research_graph(
     graph.add_node("ranker", ranker_node)
     graph.add_node("scrape", functools.partial(scrape_node, pipeline=_pipe))
     graph.add_node("extract_claims", functools.partial(extract_claims_node, llm_router=_llm))
+    graph.add_node(
+        "extract_knowledge",
+        functools.partial(extract_knowledge_node, extractor=_extractor),
+    )
     graph.add_node("critic", functools.partial(critic_node, llm_router=_llm))
     graph.add_node("verifier", functools.partial(verifier_node, llm_router=_llm))
     graph.add_node("gap_analyst", gap_analyst_node)
@@ -111,7 +148,8 @@ def build_deep_research_graph(
     graph.add_edge("search", "ranker")
     graph.add_edge("ranker", "scrape")
     graph.add_edge("scrape", "extract_claims")
-    graph.add_edge("extract_claims", "critic")
+    graph.add_edge("extract_claims", "extract_knowledge")
+    graph.add_edge("extract_knowledge", "critic")
     graph.add_edge("critic", "verifier")
     graph.add_conditional_edges(
         "verifier",
@@ -124,5 +162,17 @@ def build_deep_research_graph(
     graph.add_edge("gap_analyst", "planner")
     graph.add_edge("state_pruner", "report_writer")
     graph.add_edge("report_writer", END)
+
+    # Fail fast at build time if the declared metadata and the actually
+    # registered nodes diverge. Without this the API silently drops deltas for
+    # unlisted nodes at runtime (the original topology-drift bug).
+    registered = set(graph.nodes)
+    declared = {entry[0] for entry in GRAPH_TOPOLOGY}
+    if registered != declared:
+        raise RuntimeError(
+            "GRAPH_TOPOLOGY and the registered graph nodes disagree — "
+            f"registered but undeclared: {sorted(registered - declared)}; "
+            f"declared but unregistered: {sorted(declared - registered)}"
+        )
 
     return graph.compile()

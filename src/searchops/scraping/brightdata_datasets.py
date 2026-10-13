@@ -16,12 +16,13 @@ API docs: https://docs.brightdata.com/datasets/web-scraper-api
 
 from __future__ import annotations
 
-import structlog
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
 import httpx
+import structlog
 
-from searchops.config.subsystems.scraping import ScrapingSettings
+if TYPE_CHECKING:
+    from searchops.config.subsystems.scraping import ScrapingSettings
 
 log = structlog.get_logger(__name__)
 
@@ -29,14 +30,14 @@ _BD_DATASET_BASE = "https://api.brightdata.com/datasets/v3"
 
 # Known dataset endpoint suffixes
 _DATASET_ENDPOINTS: dict[str, str] = {
-    "github_repo":          "/github/repository",
-    "linkedin_company":     "/linkedin/company",
-    "linkedin_profile":     "/linkedin/person",
-    "crunchbase_org":       "/crunchbase/organization",
-    "reddit_thread":        "/reddit/thread",
-    "hackernews_item":      "/hackernews/item",
-    "twitter_profile":      "/twitter/user",
-    "amazon_product":       "/amazon/product",
+    "github_repo": "/github/repository",
+    "linkedin_company": "/linkedin/company",
+    "linkedin_profile": "/linkedin/person",
+    "crunchbase_org": "/crunchbase/organization",
+    "reddit_thread": "/reddit/thread",
+    "hackernews_item": "/hackernews/item",
+    "twitter_profile": "/twitter/user",
+    "amazon_product": "/amazon/product",
 }
 
 
@@ -50,9 +51,7 @@ class BrightDataDatasetClient:
 
     def __init__(self, cfg: ScrapingSettings) -> None:
         if not cfg.brightdata_api_key:
-            raise ValueError(
-                "BrightDataDatasetClient requires BRIGHTDATA_API_KEY to be configured."
-            )
+            raise ValueError("BrightDataDatasetClient requires BRIGHTDATA_API_KEY to be configured.")
         self._api_key = cfg.brightdata_api_key.get_secret_value()
         self._timeout = cfg.request_timeout
 
@@ -73,10 +72,7 @@ class BrightDataDatasetClient:
         """
         endpoint_suffix = _DATASET_ENDPOINTS.get(dataset_type)
         if not endpoint_suffix:
-            raise ValueError(
-                f"Unknown dataset_type '{dataset_type}'. "
-                f"Supported: {list(_DATASET_ENDPOINTS.keys())}"
-            )
+            raise ValueError(f"Unknown dataset_type '{dataset_type}'. Supported: {list(_DATASET_ENDPOINTS.keys())}")
 
         api_url = f"{_BD_DATASET_BASE}{endpoint_suffix}"
         headers = {

@@ -8,14 +8,18 @@ compacted post-extraction to prune raw document strings.
 
 from __future__ import annotations
 
-import structlog
 import asyncio
+from typing import TYPE_CHECKING
 
-from searchops.knowledge.domain.entity import KGEntity, KGRelation
-from searchops.knowledge.extractor import EntityExtractor
+import structlog
+
 from searchops.llm.token_budget import MAX_DOC_CHARS
 from searchops.orchestration.nodes.state_compressor import StateTokenOptimizer
-from searchops.orchestration.states.research_state import ResearchState
+
+if TYPE_CHECKING:
+    from searchops.knowledge.domain.entity import KGEntity, KGRelation
+    from searchops.knowledge.extractor import EntityExtractor
+    from searchops.orchestration.states.research_state import ResearchState
 
 log = structlog.get_logger(__name__)
 
@@ -36,7 +40,7 @@ async def extract_knowledge_node(
     ]
 
     if not valid_contents:
-        return {"entities": [], "relations": []}  # type: ignore[misc]
+        return {"entities": [], "relations": []}
 
     # Perform concurrent LLM entity extraction across documents
     tasks = [extractor.extract(content) for content in valid_contents]
@@ -46,7 +50,7 @@ async def extract_knowledge_node(
     all_relations: list[KGRelation] = []
 
     for res in results:
-        if isinstance(res, Exception):
+        if isinstance(res, BaseException):
             log.error("Document entity extraction failed", error=str(res))
             continue
         entities, relations = res
@@ -67,4 +71,4 @@ async def extract_knowledge_node(
         "entities": all_entities,
         "relations": all_relations,
         "scraped_contents": compacted_scraped,
-    }  # type: ignore[misc]
+    }

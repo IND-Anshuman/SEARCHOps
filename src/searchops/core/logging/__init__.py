@@ -8,8 +8,8 @@ from searchops.core.logging.processors import (
 )
 
 __all__ = [
-    "configure_logging",
     "add_correlation_id",
     "add_open_telemetry_ids",
+    "configure_logging",
     "redact_sensitive_fields",
 ]

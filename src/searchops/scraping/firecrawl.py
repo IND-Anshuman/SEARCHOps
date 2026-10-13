@@ -10,7 +10,6 @@ import httpx
 import structlog
 
 from searchops.config.settings import Settings, get_settings
-from searchops.core.exceptions.infrastructure import ScrapingError
 from searchops.core.interfaces.scraper import IScraper, ScrapeMode, ScrapeRequest, ScrapeResult
 
 log = structlog.get_logger(__name__)
@@ -78,9 +77,7 @@ class FirecrawlScraper(IScraper):
                 metadata={"error": str(exc)},
             )
 
-    async def scrape_many(
-        self, requests: list[ScrapeRequest], *, max_concurrency: int = 5
-    ) -> list[ScrapeResult]:
+    async def scrape_many(self, requests: list[ScrapeRequest], *, max_concurrency: int = 5) -> list[ScrapeResult]:
         """Scrape multiple URLs concurrently via Firecrawl."""
         import asyncio
 
@@ -96,4 +93,3 @@ class FirecrawlScraper(IScraper):
     async def health_check(self) -> bool:
         """Return True if Firecrawl API is configured and operational."""
         return self.api_key is not None
-

@@ -11,10 +11,10 @@ from __future__ import annotations
 
 import enum
 import uuid
-from datetime import datetime, timezone
-from typing import Any, Generic, TypeVar
+from datetime import UTC, datetime
+from typing import Any, TypeVar
 
-from pydantic import BaseModel, Field
+from pydantic import Field
 
 from searchops.shared.contracts.base import BaseSchema
 from searchops.typing.aliases import AgentId, CorrelationId, TaskId
@@ -50,7 +50,7 @@ class JsonRpcError(BaseSchema):
     data: Any | None = None
 
 
-class JsonRpcResponse(BaseSchema, Generic[T]):
+class JsonRpcResponse[T](BaseSchema):
     """JSON-RPC 2.0 Response Object."""
 
     jsonrpc: str = Field(default="2.0", frozen=True)
@@ -68,7 +68,7 @@ class A2AMessageEnvelope(BaseSchema):
     recipient_id: AgentId
     task_id: TaskId | None = None
     correlation_id: CorrelationId = Field(default_factory=lambda: CorrelationId(str(uuid.uuid4())))
-    timestamp: datetime = Field(default_factory=lambda: datetime.now(timezone.utc))
+    timestamp: datetime = Field(default_factory=lambda: datetime.now(UTC))
     payload: dict[str, Any] = Field(default_factory=dict)
     signature: str | None = Field(default=None, description="Cryptographic signature if security enabled")
 
@@ -87,5 +87,5 @@ class AgentHandshakeResponse(BaseSchema):
     """Agent handshake registration response."""
 
     success: bool
-    registered_at: datetime = Field(default_factory=lambda: datetime.now(timezone.utc))
+    registered_at: datetime = Field(default_factory=lambda: datetime.now(UTC))
     message: str = "Registered successfully"

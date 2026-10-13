@@ -12,6 +12,7 @@ Lifecycle:
   - lifespan.py:  attaches container to app.state
   - research.py / websocket.py: access via request.app.state.container
 """
+
 from __future__ import annotations
 
 from typing import TYPE_CHECKING
@@ -45,10 +46,10 @@ class ApplicationContainer:
     def __init__(
         self,
         settings: Settings,
-        cache: "RedisCache",
-        event_bus: "RedisEventBus",
-        job_state_manager: "JobStateManager",
-        research_service: "ResearchApplicationService",
+        cache: RedisCache,
+        event_bus: RedisEventBus,
+        job_state_manager: JobStateManager,
+        research_service: ResearchApplicationService,
     ) -> None:
         self.settings = settings
 
@@ -69,7 +70,7 @@ class ApplicationContainer:
         log.info("ApplicationContainer initialized with all singletons")
 
     @classmethod
-    def create(cls) -> "ApplicationContainer":
+    def create(cls) -> ApplicationContainer:
         """Factory method — creates and wires the full container.
 
         All I/O-bound initialization (Redis ping, etc.) is done in startup.py

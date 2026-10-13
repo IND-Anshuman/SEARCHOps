@@ -9,15 +9,19 @@ Routes incoming and outgoing A2A message envelopes:
 
 from __future__ import annotations
 
+from typing import TYPE_CHECKING, Any
+
 import structlog
 
-from searchops.a2a.protocol.envelopes import A2AMessageEnvelope, A2AMessageType
 from searchops.a2a.transports.http import HTTPA2ATransport, IA2ATransport
 from searchops.core.exceptions.application import UseCaseError
 from searchops.core.exceptions.domain import EntityNotFoundError
-from searchops.platform.registry.agent_registry import AgentRegistry
-from searchops.platform.registry.capability_registry import CapabilityRegistry
-from searchops.typing.aliases import AgentId
+
+if TYPE_CHECKING:
+    from searchops.a2a.protocol.envelopes import A2AMessageEnvelope
+    from searchops.platform.registry.agent_registry import AgentRegistry
+    from searchops.platform.registry.capability_registry import CapabilityRegistry
+    from searchops.typing.aliases import AgentId
 
 log = structlog.get_logger(__name__)
 
@@ -53,7 +57,8 @@ class A2AMessageRouter:
                 log.debug("Routing A2A message locally", recipient_id=recipient_id)
                 handler = self._local_handlers[recipient_id]
                 if hasattr(handler, "handle_a2a_message"):
-                    return await handler.handle_a2a_message(envelope)
+                    result: A2AMessageEnvelope = await handler.handle_a2a_message(envelope)
+                    return result
                 raise UseCaseError(f"Local agent {recipient_id} does not support A2A message handling")
 
             # 2. Remote execution via Registry lookup

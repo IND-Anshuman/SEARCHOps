@@ -7,8 +7,6 @@ to select the cost-optimal model for a given LLM task tier.
 
 from __future__ import annotations
 
-from typing import Any
-
 import structlog
 
 log = structlog.get_logger(__name__)

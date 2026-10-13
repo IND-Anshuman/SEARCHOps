@@ -15,13 +15,15 @@ the actual LLM nodes (search / extract_claims / critic).
 
 from __future__ import annotations
 
-import hashlib
+from typing import TYPE_CHECKING
 
 import structlog
 
 from searchops.core.context.research import ResearchPlan
-from searchops.orchestration.evidence import EvidenceGap
-from searchops.orchestration.states.research_state import ResearchState
+
+if TYPE_CHECKING:
+    from searchops.orchestration.evidence import EvidenceGap
+    from searchops.orchestration.states.research_state import ResearchState
 
 log = structlog.get_logger(__name__)
 
@@ -52,7 +54,7 @@ async def gap_analyst_node(state: ResearchState) -> ResearchState:
         log.info("Gap analyst: no gaps, nothing to expand")
         return {}
 
-    prior_queries = list((plan.sub_queries if plan else []))
+    prior_queries = list(plan.sub_queries if plan else [])
     new_queries: list[str] = []
     for gap in sorted(gaps, key=lambda g: g.priority, reverse=True)[:_MAX_NEW_QUERIES]:
         q = gap.target_query or gap.description
@@ -64,8 +66,9 @@ async def gap_analyst_node(state: ResearchState) -> ResearchState:
         # Still clear gaps so the critic→gap_analyst cycle cannot re-fire the
         # same gaps next round, and return the existing plan unchanged so the
         # loop state is always consistent (callers expect a 'plan' key).
+        effective_plan = plan or ResearchPlan(primary_query=state.get("query", ""))
         return {
-            "plan": plan,
+            "plan": effective_plan,
             "loop_count": state.get("loop_count", 0) + 1,
             "evidence_gaps": [],
         }

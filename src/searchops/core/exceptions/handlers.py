@@ -4,29 +4,26 @@ FastAPI exception handlers.
 Registered during application startup. Translates platform exceptions
 into structured JSON error responses following RFC 7807 (Problem Details).
 """
+
 from __future__ import annotations
 
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
 import structlog
-from fastapi import FastAPI, Request
 from fastapi.responses import ORJSONResponse
 from pydantic import ValidationError as PydanticValidationError
 from starlette.exceptions import HTTPException as StarletteHTTPException
 
-from searchops.core.exceptions.base import ErrorCode, SEARCHOpsError
 from searchops.core.exceptions.application import (
-    AuthenticationError,
-    AuthorizationError,
-    BudgetExceededError,
     RateLimitError,
-    ValidationError,
 )
-from searchops.core.exceptions.domain import EntityNotFoundError
+from searchops.core.exceptions.base import ErrorCode, SEARCHOpsError
 from searchops.core.exceptions.infrastructure import (
     CircuitBreakerOpenError,
-    TimeoutError,
 )
+
+if TYPE_CHECKING:
+    from fastapi import FastAPI, Request
 
 log = structlog.get_logger(__name__)
 
@@ -73,12 +70,10 @@ def _problem_detail(
     return body
 
 
-async def searchops_exception_handler(
-    request: Request, exc: SEARCHOpsError
-) -> ORJSONResponse:
+async def searchops_exception_handler(request: Request, exc: SEARCHOpsError) -> ORJSONResponse:
     """Handle all SEARCHOpsError subclasses."""
     status = _ERROR_CODE_TO_HTTP_STATUS.get(exc.code, 500)
-    
+
     log.warning(
         "Platform exception",
         error_code=exc.code,
@@ -88,7 +83,7 @@ async def searchops_exception_handler(
         context=exc.context,
         correlation_id=exc.correlation_id,
     )
-    
+
     extra: dict[str, Any] = {"error_code": exc.code}
     if exc.context:
         extra["context"] = exc.context
@@ -98,7 +93,7 @@ async def searchops_exception_handler(
         extra["retry_after"] = exc.retry_after_seconds
     if isinstance(exc, CircuitBreakerOpenError):
         extra["retry_after"] = exc.retry_after_seconds
-    
+
     return ORJSONResponse(
         status_code=status,
         content=_problem_detail(
@@ -112,9 +107,7 @@ async def searchops_exception_handler(
     )
 
 
-async def http_exception_handler(
-    request: Request, exc: StarletteHTTPException
-) -> ORJSONResponse:
+async def http_exception_handler(request: Request, exc: StarletteHTTPException) -> ORJSONResponse:
     """Handle standard Starlette HTTP exceptions."""
     log.info(
         "HTTP exception",
@@ -134,15 +127,13 @@ async def http_exception_handler(
     )
 
 
-async def pydantic_validation_exception_handler(
-    request: Request, exc: PydanticValidationError
-) -> ORJSONResponse:
+async def pydantic_validation_exception_handler(request: Request, exc: PydanticValidationError) -> ORJSONResponse:
     """Handle Pydantic v2 validation errors from request parsing."""
     field_errors: dict[str, list[str]] = {}
     for error in exc.errors():
-        loc = " -> ".join(str(l) for l in error["loc"])
+        loc = " -> ".join(str(part) for part in error["loc"])
         field_errors.setdefault(loc, []).append(error["msg"])
-    
+
     log.info(
         "Pydantic validation error",
         field_errors=field_errors,
@@ -161,9 +152,7 @@ async def pydantic_validation_exception_handler(
     )
 
 
-async def unhandled_exception_handler(
-    request: Request, exc: Exception
-) -> ORJSONResponse:
+async def unhandled_exception_handler(request: Request, exc: Exception) -> ORJSONResponse:
     """Catch-all for unhandled exceptions. Never leaks stack traces."""
     log.exception(
         "Unhandled exception",
@@ -184,12 +173,12 @@ async def unhandled_exception_handler(
 
 def register_exception_handlers(app: FastAPI) -> None:
     """Register all exception handlers on the FastAPI application.
-    
+
     Called during application startup from the bootstrap layer.
     """
     app.add_exception_handler(SEARCHOpsError, searchops_exception_handler)  # type: ignore[arg-type]
     app.add_exception_handler(StarletteHTTPException, http_exception_handler)  # type: ignore[arg-type]
     app.add_exception_handler(PydanticValidationError, pydantic_validation_exception_handler)  # type: ignore[arg-type]
     app.add_exception_handler(Exception, unhandled_exception_handler)
-    
+
     log.info("Exception handlers registered")

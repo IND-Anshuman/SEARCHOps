@@ -6,21 +6,23 @@ a clean interface for checking flags anywhere in the codebase.
 
 Usage:
     from searchops.feature_flags import FeatureFlagManager
-    
+
     flags = FeatureFlagManager(providers=[env_provider])
-    
+
     if await flags.is_enabled("firecrawl"):
         # use firecrawl
         ...
 """
+
 from __future__ import annotations
 
 from dataclasses import dataclass
-from typing import final
+from typing import TYPE_CHECKING, final
 
 import structlog
 
-from searchops.feature_flags.providers import FeatureFlagProvider
+if TYPE_CHECKING:
+    from searchops.feature_flags.providers import FeatureFlagProvider
 
 log = structlog.get_logger(__name__)
 
@@ -60,7 +62,7 @@ class FeatureFlagSnapshot:
         return flag_name in self._values
 
     @classmethod
-    def empty(cls) -> "FeatureFlagSnapshot":
+    def empty(cls) -> FeatureFlagSnapshot:
         """Return a snapshot with all flags disabled (safe default)."""
         return cls(_values={})
 
@@ -89,39 +91,39 @@ _DEFAULT_FLAGS: dict[str, bool] = {
     "cost_limit_enforcement_enabled": True,
     # ── Bright Data Premium Tier ─────────────────────────────────────────────────────────────
     # All BD flags default to False — opt-in when credentials are configured
-    "brightdata_unlocker_enabled": False,   # Tier 1.5: Web Unlocker proxy scraper
-    "brightdata_browser_enabled": False,    # Tier 2.5: Cloud Scraping Browser CDP
-    "brightdata_serp_enabled": False,       # BD SERP provider in search routing
-    "brightdata_datasets_enabled": False,   # BD Dataset API (GitHub/LinkedIn/Reddit)
+    "brightdata_unlocker_enabled": False,  # Tier 1.5: Web Unlocker proxy scraper
+    "brightdata_browser_enabled": False,  # Tier 2.5: Cloud Scraping Browser CDP
+    "brightdata_serp_enabled": False,  # BD SERP provider in search routing
+    "brightdata_datasets_enabled": False,  # BD Dataset API (GitHub/LinkedIn/Reddit)
 }
 
 
 @final
 class FeatureFlagManager:
     """Evaluates feature flags by querying providers in priority order.
-    
+
     Providers are queried in the order they are given. The first provider
     that returns a non-None value wins. Falls back to _DEFAULT_FLAGS.
     """
-    
+
     def __init__(self, providers: list[FeatureFlagProvider]) -> None:
         """Create a FeatureFlagManager with the given providers.
-        
+
         Args:
             providers: Ordered list of flag providers (first = highest priority).
         """
         self._providers = providers
-    
+
     async def is_enabled(self, flag_name: str) -> bool:
         """Return True if the flag is enabled.
-        
+
         Queries providers in priority order. Falls back to defaults.
         """
         for provider in self._providers:
             value = await provider.get(flag_name)
             if value is not None:
                 return value
-        
+
         default = _DEFAULT_FLAGS.get(flag_name)
         if default is None:
             log.warning(
@@ -130,11 +132,11 @@ class FeatureFlagManager:
             )
             return False
         return default
-    
+
     async def is_disabled(self, flag_name: str) -> bool:
         """Return True if the flag is disabled."""
         return not await self.is_enabled(flag_name)
-    
+
     async def get_all(self) -> dict[str, bool]:
         """Return all flag values, merging all providers and defaults."""
         merged = dict(_DEFAULT_FLAGS)
@@ -144,7 +146,7 @@ class FeatureFlagManager:
             merged.update(provider_flags)
         return merged
 
-    async def snapshot(self) -> "FeatureFlagSnapshot":
+    async def snapshot(self) -> FeatureFlagSnapshot:
         """
         Evaluate all feature flags ONCE and return an immutable snapshot.
 

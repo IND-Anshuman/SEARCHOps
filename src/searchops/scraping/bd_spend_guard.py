@@ -27,8 +27,9 @@ Key design decisions:
 from __future__ import annotations
 
 import time
+from contextlib import suppress
 from dataclasses import dataclass
-from enum import Enum
+from enum import StrEnum
 from typing import Any
 
 import structlog
@@ -58,15 +59,16 @@ return 1
 """
 
 
-class SpendDecision(str, Enum):
+class SpendDecision(StrEnum):
     APPROVED = "approved"
-    SOFT_WARNING = "soft_warning"    # Within budget but above 80% threshold
+    SOFT_WARNING = "soft_warning"  # Within budget but above 80% threshold
     HARD_REJECTED = "hard_rejected"  # Over limit — call must not proceed
 
 
 @dataclass
 class SpendSummary:
     """Spend breakdown for a given job."""
+
     job_id: str
     job_spent_usd: float
     hour_spent_usd: float
@@ -328,21 +330,19 @@ class BrightDataSpendGuard:
         """
         result = await self._redis.eval(
             _CHECK_AND_INCREMENT_LUA,
-            1,           # Number of KEYS
-            key,         # KEYS[1]
-            str(cost),   # ARGV[1]
+            1,  # Number of KEYS
+            key,  # KEYS[1]
+            str(cost),  # ARGV[1]
             str(limit),  # ARGV[2]
-            str(ttl),    # ARGV[3]
+            str(ttl),  # ARGV[3]
         )
         return bool(result)
 
     async def _rollback_scope(self, key: str, cost: float) -> None:
         """Decrement a budget key by cost (rollback a reservation)."""
-        try:
-            # INCRBYFLOAT with negative value is atomic and safe
+        # INCRBYFLOAT with negative value is atomic and safe — best-effort rollback
+        with suppress(Exception):
             await self._redis.incrbyfloat(key, -cost)
-        except Exception:
-            pass  # Best-effort rollback
 
 
 def build_spend_guard(

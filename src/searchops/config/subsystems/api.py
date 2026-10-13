@@ -2,8 +2,10 @@
 
 from __future__ import annotations
 
-from pydantic_settings import BaseSettings, SettingsConfigDict
+from typing import Any
+
 from pydantic import field_validator
+from pydantic_settings import BaseSettings, SettingsConfigDict
 
 
 class APISettings(BaseSettings):
@@ -34,11 +36,13 @@ class APISettings(BaseSettings):
         if isinstance(v, str):
             if v.startswith("[") and v.endswith("]"):
                 import json
+
                 try:
-                    return json.loads(v)
+                    raw: Any = json.loads(v)
+                    return [str(x) for x in raw] if isinstance(raw, list) else [str(raw)]
                 except Exception:
                     pass
-            return [x.strip() for x in v.split(",") if x.strip()]
+            return [str(x).strip() for x in v.split(",") if str(x).strip()]
         return v
 
     @field_validator("port")

@@ -24,14 +24,14 @@ Tier priorities (integer, no fractions):
 from __future__ import annotations
 
 from dataclasses import dataclass, field
-from enum import Enum
+from enum import StrEnum
 from typing import TYPE_CHECKING
 
 if TYPE_CHECKING:
     from searchops.core.interfaces.scraper import IScraper
 
 
-class FailureClass(str, Enum):
+class FailureClass(StrEnum):
     """Classification of why a scraping tier failed.
 
     Used to determine whether escalating to a premium tier is appropriate.
@@ -67,7 +67,7 @@ _STATUS_TO_FAILURE: dict[int, FailureClass] = {
     429: FailureClass.ACCESS,
     500: FailureClass.NETWORK,
     502: FailureClass.NETWORK,
-    503: FailureClass.ACCESS,   # Usually bot/CAPTCHA detection
+    503: FailureClass.ACCESS,  # Usually bot/CAPTCHA detection
     504: FailureClass.NETWORK,
 }
 
@@ -138,20 +138,18 @@ class ScrapeTier:
     priority: int
     name: str
     is_premium: bool = False
-    trigger_on: frozenset[FailureClass] = field(
-        default_factory=lambda: frozenset()
-    )
+    trigger_on: frozenset[FailureClass] = field(default_factory=lambda: frozenset())
     feature_flag: str | None = None
     timeout_seconds: float = 30.0
     cost_usd: float = 0.0
 
     # Injected at construction time by ScrapingPipeline
-    scraper: "IScraper | None" = field(default=None, repr=False)
+    scraper: IScraper | None = field(default=None, repr=False)
 
     def is_eligible(
         self,
         last_failure_class: FailureClass | None,
-        flag_snapshot: "dict[str, bool]",
+        flag_snapshot: dict[str, bool],
     ) -> bool:
         """
         Check if this tier is eligible to run given the current pipeline state.
@@ -165,9 +163,8 @@ class ScrapeTier:
             True if this tier should be attempted.
         """
         # Check feature flag first
-        if self.feature_flag is not None:
-            if not flag_snapshot.get(self.feature_flag, False):
-                return False
+        if self.feature_flag is not None and not flag_snapshot.get(self.feature_flag, False):
+            return False
 
         # Check scraper is available
         if self.scraper is None:
@@ -195,14 +192,14 @@ TIER_DEFINITIONS: list[ScrapeTier] = [
     ScrapeTier(
         priority=0,
         name="stealth_http",
-        feature_flag=None,   # Always enabled
+        feature_flag=None,  # Always enabled
         timeout_seconds=15.0,
         cost_usd=0.0,
     ),
     ScrapeTier(
         priority=1,
         name="proxy_router",
-        feature_flag=None,   # Enabled if proxy_router is not None
+        feature_flag=None,  # Enabled if proxy_router is not None
         timeout_seconds=20.0,
         cost_usd=0.0,
     ),
@@ -228,7 +225,7 @@ TIER_DEFINITIONS: list[ScrapeTier] = [
         # Only activates on ACCESS failures (403/429/503)
         trigger_on=frozenset({FailureClass.ACCESS}),
         timeout_seconds=30.0,
-        cost_usd=0.001,      # ~$1 / 1000 pages (BD list pricing)
+        cost_usd=0.001,  # ~$1 / 1000 pages (BD list pricing)
     ),
     ScrapeTier(
         priority=5,
@@ -245,12 +242,12 @@ TIER_DEFINITIONS: list[ScrapeTier] = [
         # Only activates on ACCESS failures — not 404
         trigger_on=frozenset({FailureClass.ACCESS}),
         timeout_seconds=60.0,
-        cost_usd=0.01,       # ~$10 / 1000 pages (BD Cloud Browser pricing)
+        cost_usd=0.01,  # ~$10 / 1000 pages (BD Cloud Browser pricing)
     ),
     ScrapeTier(
         priority=7,
         name="basic_http",
-        feature_flag=None,   # Last resort, always enabled
+        feature_flag=None,  # Last resort, always enabled
         timeout_seconds=15.0,
         cost_usd=0.0,
     ),

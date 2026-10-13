@@ -1,10 +1,11 @@
 """
 Health check response schemas.
 """
+
 from __future__ import annotations
 
 import enum
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from typing import Any
 
 from pydantic import Field
@@ -14,6 +15,7 @@ from searchops.shared.contracts.base import BaseSchema
 
 class HealthStatusValue(enum.StrEnum):
     """Health check result status."""
+
     HEALTHY = "healthy"
     DEGRADED = "degraded"
     UNHEALTHY = "unhealthy"
@@ -21,7 +23,7 @@ class HealthStatusValue(enum.StrEnum):
 
 class ComponentHealth(BaseSchema):
     """Health status of a single platform component."""
-    
+
     name: str
     status: HealthStatusValue
     message: str | None = None
@@ -31,16 +33,14 @@ class ComponentHealth(BaseSchema):
 
 class HealthResponse(BaseSchema):
     """Overall platform health response."""
-    
+
     status: HealthStatusValue
     service: str
     version: str
-    timestamp: datetime = Field(
-        default_factory=lambda: datetime.now(timezone.utc)
-    )
+    timestamp: datetime = Field(default_factory=lambda: datetime.now(UTC))
     components: list[ComponentHealth] = Field(default_factory=list)
     uptime_seconds: float = 0.0
-    
+
     @classmethod
     def healthy(cls, service: str, version: str, components: list[ComponentHealth], uptime: float) -> HealthResponse:
         """Factory for a healthy response."""
@@ -51,7 +51,7 @@ class HealthResponse(BaseSchema):
             components=components,
             uptime_seconds=uptime,
         )
-    
+
     @classmethod
     def degraded(cls, service: str, version: str, components: list[ComponentHealth], uptime: float) -> HealthResponse:
         """Factory for a degraded response."""

@@ -4,6 +4,7 @@ ContextVar bindings for request-scoped data.
 Using contextvars ensures thread/async safety without passing
 context objects through every function signature.
 """
+
 from __future__ import annotations
 
 from contextvars import ContextVar
@@ -16,21 +17,13 @@ if TYPE_CHECKING:
 # ─── ContextVar declarations ──────────────────────────────────────────────────
 
 #: The ExecutionContext for the current async task.
-current_execution_context: ContextVar[ExecutionContext | None] = ContextVar(
-    "current_execution_context", default=None
-)
+current_execution_context: ContextVar[ExecutionContext | None] = ContextVar("current_execution_context", default=None)
 
 #: The RequestContext for the current HTTP request.
-current_request_context: ContextVar[RequestContext | None] = ContextVar(
-    "current_request_context", default=None
-)
+current_request_context: ContextVar[RequestContext | None] = ContextVar("current_request_context", default=None)
 
 #: Shortcut: current correlation ID for structured logging.
-current_correlation_id: ContextVar[str] = ContextVar(
-    "current_correlation_id", default=""
-)
+current_correlation_id: ContextVar[str] = ContextVar("current_correlation_id", default="")
 
 #: Shortcut: current OpenTelemetry trace ID.
-current_trace_id: ContextVar[str] = ContextVar(
-    "current_trace_id", default=""
-)
+current_trace_id: ContextVar[str] = ContextVar("current_trace_id", default="")

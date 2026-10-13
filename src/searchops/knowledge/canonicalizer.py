@@ -52,4 +52,3 @@ class EntityCanonicalizer:
         self._canonical_registry[raw_key] = raw_key
         self._type_buckets.setdefault(type_slug, []).append(raw_key)
         return raw_key
-

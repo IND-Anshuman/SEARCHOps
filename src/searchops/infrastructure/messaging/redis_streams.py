@@ -7,16 +7,18 @@ Publishes and subscribes to events using Redis Streams (XADD, XREADGROUP).
 
 from __future__ import annotations
 
-from typing import Any, Callable, Coroutine
+from typing import TYPE_CHECKING, Any, cast
 
-import orjson
-import redis.asyncio as aioredis
 import structlog
 
 from searchops.core.exceptions.infrastructure import MessagingError
 from searchops.core.interfaces.event_bus import IEventBus, IEventHandler
 from searchops.infrastructure.cache.redis import get_redis_client
-from searchops.shared.domain.event import DomainEvent
+
+if TYPE_CHECKING:
+    import redis.asyncio as aioredis
+
+    from searchops.shared.domain.event import DomainEvent
 
 log = structlog.get_logger(__name__)
 
@@ -50,7 +52,7 @@ class RedisStreamsEventBus(IEventBus):
                 "event_id": event.event_id,
                 "payload": payload,
             }
-            msg_id = await self.client.xadd(stream_key, message_data)
+            msg_id = await self.client.xadd(stream_key, cast("Any", message_data))
             log.debug(
                 "Event published",
                 topic=topic,

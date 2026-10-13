@@ -47,8 +47,7 @@ class ScrapingSettings(BaseSettings):
         default=None,
         alias="PROXY_URL_TIER1",
         description=(
-            "DataImpulse rotating residential proxy ($1/GB). "
-            "Format: http://user:pass@gate.dc.dataimpulse.com:823"
+            "DataImpulse rotating residential proxy ($1/GB). Format: http://user:pass@gate.dc.dataimpulse.com:823"
         ),
     )
     proxy_url_tier2: SecretStr | None = Field(

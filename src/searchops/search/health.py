@@ -1,16 +1,17 @@
 import collections
 import time
-from enum import Enum
-from typing import Dict
+from enum import StrEnum
 
 import structlog
 
 log = structlog.get_logger(__name__)
 
-class CircuitState(str, Enum):
+
+class CircuitState(StrEnum):
     CLOSED = "closed"
     OPEN = "open"
     HALF_OPEN = "half_open"
+
 
 class CircuitBreaker:
     """Sliding-window circuit breaker state machine per search provider."""
@@ -43,13 +44,18 @@ class CircuitBreaker:
     def record_failure(self) -> None:
         """Record a execution failure. Tripping the circuit if threshold crossed."""
         self.failure_count += 1
-        if self.state == CircuitState.CLOSED and self.failure_count >= self.failure_threshold:
-            self._transition_to(CircuitState.OPEN)
-        elif self.state == CircuitState.HALF_OPEN:
+        if (
+            self.state == CircuitState.CLOSED and self.failure_count >= self.failure_threshold
+        ) or self.state == CircuitState.HALF_OPEN:
             self._transition_to(CircuitState.OPEN)
 
     def _transition_to(self, new_state: CircuitState) -> None:
-        log.warn("Circuit Breaker state transition", old_state=self.state, new_state=new_state, failures=self.failure_count)
+        log.warn(
+            "Circuit Breaker state transition",
+            old_state=self.state,
+            new_state=new_state,
+            failures=self.failure_count,
+        )
         self.state = new_state
         self.last_state_change = time.time()
 
@@ -58,11 +64,11 @@ class SearchHealthMonitor:
     """Tracks latencies, error counts, and availability rate of providers."""
 
     def __init__(self) -> None:
-        self._circuit_breakers: Dict[str, CircuitBreaker] = {}
+        self._circuit_breakers: dict[str, CircuitBreaker] = {}
         # deque(maxlen=50) gives O(1) append+bounded-discard vs list.pop(0) O(N)
-        self._latencies: Dict[str, collections.deque[float]] = {}
-        self._success_counts: Dict[str, int] = {}
-        self._failure_counts: Dict[str, int] = {}
+        self._latencies: dict[str, collections.deque[float]] = {}
+        self._success_counts: dict[str, int] = {}
+        self._failure_counts: dict[str, int] = {}
 
     def get_breaker(self, provider_name: str) -> CircuitBreaker:
         """Get or initialize CircuitBreaker for a provider."""
@@ -88,7 +94,7 @@ class SearchHealthMonitor:
 
     def get_average_latency(self, provider_name: str) -> float:
         """Get average latency of the last queries in ms."""
-        l_list = self._latencies.get(provider_name, [])
+        l_list: collections.deque[float] | list[float] = self._latencies.get(provider_name, [])
         if not l_list:
             return 0.0
         return sum(l_list) / len(l_list)

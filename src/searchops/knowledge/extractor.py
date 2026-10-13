@@ -5,13 +5,17 @@ LLM-Powered Entity & Relationship Extractor with Pydantic Structured Outputs & S
 from __future__ import annotations
 
 import asyncio
-import re
-import orjson
+from typing import TYPE_CHECKING
+
 import structlog
 
 from searchops.knowledge.domain.entity import KGEntity, KGRelation
 from searchops.knowledge.schemas.extraction import ExtractionResult
-from searchops.llm.router import LLMRouter
+from searchops.llm.json_repair import TIER_SPAN_SALVAGE, repair_json
+from searchops.llm.repair_memory import get_repair_memory
+
+if TYPE_CHECKING:
+    from searchops.llm.router import LLMRouter
 
 log = structlog.get_logger(__name__)
 
@@ -47,16 +51,35 @@ class EntityExtractor:
             temperature=0.0,
         )
 
-        try:
-            clean_json = raw_response.strip()
-            # Handle markdown code blocks robustly anywhere in text
-            if "```" in clean_json:
-                match = re.search(r"```(?:json)?\s*([\s\S]*?)\s*```", clean_json)
-                if match:
-                    clean_json = match.group(1).strip()
+        # Repair ladder — same contract as the claim extractor: recover what is
+        # recoverable, count every outcome, never silently drop a document.
+        outcome = repair_json(
+            raw_response,
+            record_key="entities",
+            field_keys=("name", "description"),
+        )
+        memory = get_repair_memory()
 
-            parsed_raw = orjson.loads(clean_json)
-            result = ExtractionResult.model_validate(parsed_raw)
+        if outcome.parsed is None:
+            memory.record("entity_extraction", TIER_SPAN_SALVAGE, recovered=False)
+            log.error(
+                "entity extraction unrecoverable",
+                tier=outcome.tier_name,
+                raw_head=raw_response[:200],
+            )
+            return [], []
+
+        memory.record("entity_extraction", outcome.repair_tier, recovered=True)
+
+        if outcome.salvaged:
+            log.info(
+                "entities partially salvaged",
+                recovered=outcome.recovered_count,
+                tier=outcome.tier_name,
+            )
+
+        try:
+            result = ExtractionResult.model_validate(outcome.parsed)
 
             entity_map: dict[str, KGEntity] = {}
             for item in result.entities:
@@ -69,9 +92,31 @@ class EntityExtractor:
                     entity_map[item.name.strip()] = e
 
             relations: list[KGRelation] = []
+
+            def _resolve(name: str) -> KGEntity | None:
+                """Entity for *name*, materialising a referenced-only endpoint.
+
+                The model routinely names a relation endpoint it never declares
+                as an entity (``USES: Python -> CPython`` with only ``Python``
+                in ``entities``). Dropping the whole relation over that silently
+                lost graph structure, so a placeholder entity is created and the
+                relation is kept. The placeholder is marked ``description=""``
+                and ``entity_type="Concept"`` so it is distinguishable upstream
+                from a fully-described entity.
+                """
+                key = name.strip()
+                if not key:
+                    return None
+                existing = entity_map.get(key)
+                if existing is not None:
+                    return existing
+                placeholder = KGEntity(name=key, entity_type="Concept", description="")
+                entity_map[key] = placeholder
+                return placeholder
+
             for rel in result.relations:
-                src = entity_map.get(rel.source.strip())
-                tgt = entity_map.get(rel.target.strip())
+                src = _resolve(rel.source)
+                tgt = _resolve(rel.target)
                 if src and tgt:
                     r = KGRelation(
                         source_id=src.id,
@@ -86,7 +131,17 @@ class EntityExtractor:
             return list(entity_map.values()), relations
 
         except Exception as exc:
-            log.error("Failed to parse extracted entities", raw_response=raw_response[:200], error=str(exc))
+            # A salvaged payload can fail schema validation when a required
+            # field never survived truncation. That is a partial outcome — it is
+            # counted and logged, never presented as a clean parse.
+            log.error(
+                "Failed to parse extracted entities",
+                tier=outcome.tier_name,
+                salvaged=outcome.salvaged,
+                raw_response=raw_response[:200],
+                error=str(exc),
+            )
+            memory.record("entity_extraction", TIER_SPAN_SALVAGE, recovered=False)
             return [], []
 
     async def extract_batch(self, documents: list[str], batch_size: int = 4) -> tuple[list[KGEntity], list[KGRelation]]:
@@ -94,13 +149,12 @@ class EntityExtractor:
         if not documents:
             return [], []
 
-        batches = [
-            documents[i : i + batch_size]
-            for i in range(0, len(documents), batch_size)
-        ]
+        batches = [documents[i : i + batch_size] for i in range(0, len(documents), batch_size)]
         sem = asyncio.Semaphore(5)
 
-        async def _extract_bounded(batch_docs: list[str]) -> tuple[list[KGEntity], list[KGRelation]]:
+        async def _extract_bounded(
+            batch_docs: list[str],
+        ) -> tuple[list[KGEntity], list[KGRelation]]:
             async with sem:
                 return await self.extract("\n\n--- DOCUMENT SEPARATOR ---\n\n".join(batch_docs))
 
@@ -112,7 +166,7 @@ class EntityExtractor:
         entity_by_canonical: dict[str, KGEntity] = {}
 
         for res in results:
-            if isinstance(res, Exception):
+            if isinstance(res, BaseException):
                 log.error("Batch entity extraction task failed", error=str(res))
                 continue
             entities, relations = res

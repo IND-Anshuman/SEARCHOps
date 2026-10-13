@@ -17,14 +17,17 @@ Token economy:
 from __future__ import annotations
 
 import re
+from typing import TYPE_CHECKING, Any
 
 import orjson
 import structlog
 
 from searchops.core.observability.metrics import NODE_INVOCATIONS_TOTAL
-from searchops.llm.router import LLMRouter
 from searchops.orchestration.evidence import Claim, EvidenceGap
-from searchops.orchestration.states.research_state import ResearchState
+
+if TYPE_CHECKING:
+    from searchops.llm.router import LLMRouter
+    from searchops.orchestration.states.research_state import ResearchState
 
 log = structlog.get_logger(__name__)
 
@@ -48,7 +51,7 @@ Rules:
 - Return NO markdown, NO commentary — only the JSON object."""
 
 
-def _clean_json(raw: str) -> dict:
+def _clean_json(raw: str) -> dict[str, Any]:
     """Strip code fences and parse JSON, returning a dict or {} on failure."""
     clean = raw.strip()
     if "```" in clean:
@@ -84,10 +87,7 @@ async def critic_node(state: ResearchState, *, llm_router: LLMRouter) -> Researc
 
     NODE_INVOCATIONS_TOTAL.labels(node="critic", outcome="invoked").inc()
 
-    claims_brief = "\n".join(
-        f"- [{c.id}] ({c.status}) {c.text[:160]}"
-        for c in claims[:20]
-    ) or "None"
+    claims_brief = "\n".join(f"- [{c.id}] ({c.status}) {c.text[:160]}" for c in claims[:20]) or "None"
 
     raw = await llm_router.generate(
         prompt=f"QUERY: {query}\n\nEVIDENCE CLAIMS:\n{claims_brief}",

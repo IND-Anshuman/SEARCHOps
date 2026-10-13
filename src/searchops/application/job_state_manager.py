@@ -31,17 +31,20 @@ Design:
   WebSocket handlers call this first to handle late subscribers:
   if the job is already completed, the client gets the final state at once.
 """
+
 from __future__ import annotations
 
 import asyncio
-from datetime import datetime, timezone
-from typing import Any, AsyncGenerator
+from typing import TYPE_CHECKING, Any
 
 import orjson
 import structlog
 
-from searchops.infrastructure.cache.redis import RedisCache
-from searchops.infrastructure.events.bus import RedisEventBus
+if TYPE_CHECKING:
+    from collections.abc import AsyncGenerator
+
+    from searchops.infrastructure.cache.redis import RedisCache
+    from searchops.infrastructure.events.bus import RedisEventBus
 
 log = structlog.get_logger(__name__)
 

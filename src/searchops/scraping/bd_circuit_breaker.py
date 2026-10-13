@@ -23,16 +23,16 @@ from __future__ import annotations
 
 import asyncio
 import time
-from enum import Enum
+from enum import StrEnum
 
 import structlog
 
-from searchops.scraping.bd_metrics import BD_CIRCUIT_TRIPS, BD_CIRCUIT_RECOVERIES
+from searchops.scraping.bd_metrics import BD_CIRCUIT_RECOVERIES, BD_CIRCUIT_TRIPS
 
 log = structlog.get_logger(__name__)
 
 
-class CircuitState(str, Enum):
+class CircuitState(StrEnum):
     CLOSED = "closed"
     OPEN = "open"
     HALF_OPEN = "half_open"
@@ -103,10 +103,8 @@ class BrightDataCircuitBreaker:
         if state == CircuitState.OPEN:
             # Check if cooldown has expired — transition to HALF_OPEN
             elapsed = time.monotonic() - self._last_state_change
-            if elapsed >= self.recovery_timeout_sec:
-                # Optimistic read — actual transition happens in record_*
-                return True  # Allow the probe request
-            return False
+            # Optimistic read — actual transition happens in record_*
+            return elapsed >= self.recovery_timeout_sec  # Allow the probe request
 
         # HALF_OPEN: allow up to half_open_max_calls concurrent probes
         return self._half_open_calls < self.half_open_max_calls
@@ -202,7 +200,7 @@ bd_unlocker_breaker = BrightDataCircuitBreaker(
 
 bd_browser_breaker = BrightDataCircuitBreaker(
     name="bd_browser",
-    failure_threshold=2,     # Lower threshold — more expensive per call
+    failure_threshold=2,  # Lower threshold — more expensive per call
     recovery_timeout_sec=120.0,  # Longer cooldown for cloud browser
 )
 

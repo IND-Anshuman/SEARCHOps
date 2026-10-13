@@ -69,8 +69,8 @@ export const ReportInsights: React.FC<ReportInsightsProps> = ({ jobId, enabled }
 
     void (async () => {
       const [trustRes, gapRes] = await Promise.all([
-        fetchJson<TrustReport>(`/derived/${jobId}/trust`),
-        fetchJson<{ gaps: EvidenceGap[] }>(`/derived/${jobId}/next-steps`),
+        fetchJson<TrustReport>(`/api/v1/derived/${jobId}/trust`),
+        fetchJson<{ gaps: EvidenceGap[] }>(`/api/v1/derived/${jobId}/next-steps`),
       ]);
       if (cancelled) return;
       setTrust(trustRes);
@@ -87,7 +87,7 @@ export const ReportInsights: React.FC<ReportInsightsProps> = ({ jobId, enabled }
   const loadGlossary = useCallback(async () => {
     if (glossary !== null) return;
     setLoading('glossary');
-    const res = await fetchJson<{ terms: GlossaryTerm[] }>(`/derived/${jobId}/glossary`);
+    const res = await fetchJson<{ terms: GlossaryTerm[] }>(`/api/v1/derived/${jobId}/glossary`);
     setGlossary(res?.terms ?? []);
     setLoading(null);
   }, [glossary, jobId, fetchJson]);
@@ -95,7 +95,7 @@ export const ReportInsights: React.FC<ReportInsightsProps> = ({ jobId, enabled }
   const loadStudy = useCallback(async () => {
     if (study !== null) return;
     setLoading('study');
-    const res = await fetchJson<StudyGuide>(`/derived/${jobId}/study-guide`);
+    const res = await fetchJson<StudyGuide>(`/api/v1/derived/${jobId}/study-guide`);
     setStudy(res ?? { questions: [], note: 'Could not reach the study guide service.' });
     setLoading(null);
   }, [study, jobId, fetchJson]);

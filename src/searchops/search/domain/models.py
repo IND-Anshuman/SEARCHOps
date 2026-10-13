@@ -1,8 +1,10 @@
-from enum import Enum
+from enum import StrEnum
 from typing import Any
+
 from pydantic import BaseModel, Field
 
-class SearchCapability(str, Enum):
+
+class SearchCapability(StrEnum):
     SEMANTIC = "semantic"
     KEYWORD = "keyword"
     NEWS = "news"
@@ -15,14 +17,16 @@ class SearchCapability(str, Enum):
     METADATA = "metadata"
     # Premium-tier capabilities (Bright Data)
     SERP_FEATURES = "serp_features"  # PAA, Knowledge Graph, Sitelinks
-    ANTI_BOT = "anti_bot"            # CAPTCHA bypass via residential proxy network
+    ANTI_BOT = "anti_bot"  # CAPTCHA bypass via residential proxy network
 
-class SearchProfile(str, Enum):
-    FAST     = "fast"
-    DEEP     = "deep"
+
+class SearchProfile(StrEnum):
+    FAST = "fast"
+    DEEP = "deep"
     ACADEMIC = "academic"
-    NEWS     = "news"
-    PREMIUM  = "premium"  # Forces Bright Data SERP + Web Unlocker cascade
+    NEWS = "news"
+    PREMIUM = "premium"  # Forces Bright Data SERP + Web Unlocker cascade
+
 
 class NormalizedSearchResult(BaseModel):
     title: str

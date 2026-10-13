@@ -1,6 +1,7 @@
 """
 Value Object base class for DDD.
 """
+
 from __future__ import annotations
 
 from typing import Any
@@ -11,7 +12,7 @@ from pydantic import BaseModel, ConfigDict
 class BaseValueObject(BaseModel):
     """
     Base class for all domain value objects.
-    
+
     Value objects have no identity, only value equality. They are immutable.
     """
 

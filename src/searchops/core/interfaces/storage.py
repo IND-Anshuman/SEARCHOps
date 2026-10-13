@@ -5,10 +5,7 @@ Storage Abstraction Layer: Domain Interfaces for Vector, Graph, Cache, and Check
 from __future__ import annotations
 
 from abc import ABC, abstractmethod
-from typing import TYPE_CHECKING, Any
-
-if TYPE_CHECKING:
-    from searchops.knowledge.domain.entity import KGEntity, KGRelation
+from typing import Any
 
 
 class IVectorStore(ABC):

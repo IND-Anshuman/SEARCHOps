@@ -11,7 +11,7 @@ Design decisions:
 
 from __future__ import annotations
 
-from typing import AsyncGenerator
+from typing import TYPE_CHECKING
 
 import structlog
 from sqlalchemy.ext.asyncio import (
@@ -23,6 +23,9 @@ from sqlalchemy.ext.asyncio import (
 from sqlalchemy.pool import NullPool
 
 from searchops.config.settings import Settings, get_settings
+
+if TYPE_CHECKING:
+    from collections.abc import AsyncGenerator
 
 log = structlog.get_logger(__name__)
 

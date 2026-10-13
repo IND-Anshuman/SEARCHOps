@@ -5,7 +5,8 @@ ETag & SHA256 Content-Hash Cache for Scraping Ingestion.
 from __future__ import annotations
 
 import hashlib
-import orjson
+from typing import Any
+
 import structlog
 
 from searchops.infrastructure.cache.redis import RedisCache, get_redis_client
@@ -24,14 +25,14 @@ class ContentHashCache:
         """Compute SHA256 hex digest of document text."""
         return hashlib.sha256(content.encode("utf-8")).hexdigest()
 
-    async def get_cached_scrape(self, url: str) -> dict | None:
+    async def get_cached_scrape(self, url: str) -> dict[str, Any] | None:
         """Retrieve cached scrape payload by URL hash key."""
         key = f"scrape_cache:{hashlib.sha256(url.encode()).hexdigest()}"
         return await self.cache.get(key)
 
-    async def set_cached_scrape(self, url: str, payload: dict, ttl_seconds: int = 86400) -> None:
+    async def set_cached_scrape(self, url: str, payload: dict[str, Any], ttl_seconds: int = 86400) -> None:
         """Cache scrape result with SHA256 content metadata."""
-        if "content" in payload and payload["content"]:
+        if payload.get("content"):
             payload["content_hash"] = self.compute_sha256(payload["content"])
 
         key = f"scrape_cache:{hashlib.sha256(url.encode()).hexdigest()}"

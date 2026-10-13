@@ -5,6 +5,7 @@ Scrape Dead-Letter Queue (DLQ) & Failure Recovery Manager.
 from __future__ import annotations
 
 import time
+
 import structlog
 from pydantic import BaseModel, Field
 

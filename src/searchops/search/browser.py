@@ -1,7 +1,9 @@
-import structlog
 from typing import Any
 
+import structlog
+
 log = structlog.get_logger(__name__)
+
 
 class BrowserManager:
     """Manages a persistent, reusable Chromium browser context pool for scraping."""
@@ -18,15 +20,15 @@ class BrowserManager:
 
         try:
             from playwright.async_api import async_playwright
+
             log.info("Starting persistent Playwright browser instance")
             self._playwright = await async_playwright().start()
             self._browser = await self._playwright.chromium.launch(
-                headless=True,
-                args=["--disable-dev-shm-usage", "--no-sandbox"]
+                headless=True, args=["--disable-dev-shm-usage", "--no-sandbox"]
             )
             self._context = await self._browser.new_context(
                 viewport={"width": 1280, "height": 800},
-                user_agent="Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36"
+                user_agent="Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36",
             )
         except Exception as e:
             log.error("Failed to initialize Playwright browser", error=str(e))

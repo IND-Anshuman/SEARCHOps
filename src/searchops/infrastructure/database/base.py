@@ -10,10 +10,9 @@ Features:
 from __future__ import annotations
 
 import re
-from datetime import datetime, timezone
-from typing import Any
+from datetime import UTC, datetime
 
-from sqlalchemy import DateTime, Integer, String
+from sqlalchemy import DateTime, Integer
 from sqlalchemy.orm import DeclarativeBase, Mapped, declared_attr, mapped_column
 
 
@@ -27,7 +26,7 @@ class BaseORM(DeclarativeBase):
     """Root declarative base for all SQLAlchemy models in SEARCHOps."""
 
     @declared_attr.directive
-    def __tablename__(cls) -> str: # noqa: N805
+    def __tablename__(cls) -> str:
         """Generate table name automatically from model class name."""
         return _to_snake_case(cls.__name__)
 
@@ -37,13 +36,13 @@ class TimestampMixin:
 
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True),
-        default=lambda: datetime.now(timezone.utc),
+        default=lambda: datetime.now(UTC),
         nullable=False,
     )
     updated_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True),
-        default=lambda: datetime.now(timezone.utc),
-        onupdate=lambda: datetime.now(timezone.utc),
+        default=lambda: datetime.now(UTC),
+        onupdate=lambda: datetime.now(UTC),
         nullable=False,
     )
 

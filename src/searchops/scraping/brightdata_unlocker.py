@@ -18,11 +18,11 @@ from __future__ import annotations
 
 import asyncio
 import time
+from typing import TYPE_CHECKING
 
 import httpx
 import structlog
 
-from searchops.config.subsystems.scraping import ScrapingSettings
 from searchops.core.interfaces.scraper import IScraper, ScrapeMode, ScrapeRequest, ScrapeResult
 from searchops.scraping.bd_auth import (
     BrightDataProxyAuth,
@@ -35,6 +35,9 @@ from searchops.scraping.bd_metrics import (
     record_bd_request,
 )
 from searchops.scraping.content_pruner import get_content_pruner
+
+if TYPE_CHECKING:
+    from searchops.config.subsystems.scraping import ScrapingSettings
 
 log = structlog.get_logger(__name__)
 
@@ -94,7 +97,7 @@ class BrightDataUnlockerScraper(IScraper):
             async with httpx.AsyncClient(
                 proxy=proxy_url,
                 auth=proxy_auth,
-                verify=self._ssl_context,   # TLS verification ENABLED
+                verify=self._ssl_context,  # TLS verification ENABLED
                 timeout=self._timeout,
                 follow_redirects=True,
             ) as client:
@@ -166,9 +169,7 @@ class BrightDataUnlockerScraper(IScraper):
                 metadata={"error": safe_err},
             )
 
-    async def scrape_many(
-        self, requests: list[ScrapeRequest], *, max_concurrency: int = 5
-    ) -> list[ScrapeResult]:
+    async def scrape_many(self, requests: list[ScrapeRequest], *, max_concurrency: int = 5) -> list[ScrapeResult]:
         """Scrape multiple URLs concurrently via BD Unlocker."""
         sem = asyncio.Semaphore(max_concurrency)
 

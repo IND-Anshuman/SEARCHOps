@@ -4,6 +4,7 @@ Graceful shutdown sequence.
 Called when the FastAPI application receives a shutdown signal.
 Each resource is closed in reverse initialization order.
 """
+
 from __future__ import annotations
 
 import structlog
@@ -36,6 +37,7 @@ async def _close_redis() -> None:
     """Close the global Redis async client."""
     try:
         from searchops.infrastructure.cache.redis import close_redis
+
         await close_redis()
     except Exception as exc:
         log.warning("Failed to close Redis connection", error=str(exc))
@@ -45,6 +47,7 @@ def _flush_otel() -> None:
     """Flush pending OpenTelemetry spans to the exporter."""
     try:
         from opentelemetry import trace
+
         provider = trace.get_tracer_provider()
         if hasattr(provider, "force_flush"):
             provider.force_flush(timeout_millis=5000)

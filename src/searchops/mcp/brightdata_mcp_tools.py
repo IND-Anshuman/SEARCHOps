@@ -17,11 +17,12 @@ Tool activation requires:
 
 from __future__ import annotations
 
-import structlog
 from typing import Any
 
+import structlog
+
 from searchops.config.settings import get_settings
-from searchops.core.interfaces.scraper import ScrapeRequest, ScrapeMode
+from searchops.core.interfaces.scraper import ScrapeMode, ScrapeRequest
 
 log = structlog.get_logger(__name__)
 
@@ -29,6 +30,7 @@ log = structlog.get_logger(__name__)
 # ────────────────────────────────────────────────────────────────────────────
 #  Tool: brightdata_serp_search
 # ────────────────────────────────────────────────────────────────────────────
+
 
 async def brightdata_serp_search(
     query: str,
@@ -53,9 +55,9 @@ async def brightdata_serp_search(
             - knowledge_graph: dict of entity card data
             - related_searches: list of related query strings
     """
-    from searchops.search.providers.brightdata_serp import BrightDataSerpProvider
     from searchops.search.contracts import SearchQuery
     from searchops.search.domain.models import SearchProfile
+    from searchops.search.providers.brightdata_serp import BrightDataSerpProvider
 
     cfg = get_settings()
     if not cfg.search.brightdata_api_key:
@@ -72,7 +74,7 @@ async def brightdata_serp_search(
     try:
         items = await provider.search(search_query)
         paa: list[str] = []
-        kg: dict = {}
+        kg: dict[str, Any] = {}
         related: list[str] = []
 
         if items:
@@ -105,6 +107,7 @@ async def brightdata_serp_search(
 #  Tool: brightdata_unlocker_scrape
 # ────────────────────────────────────────────────────────────────────────────
 
+
 async def brightdata_unlocker_scrape(
     url: str,
     extract_markdown: bool = True,
@@ -136,7 +139,7 @@ async def brightdata_unlocker_scrape(
     if scraper is None:
         return {
             "error": "Bright Data Unlocker credentials not configured. "
-                     "Set BRIGHTDATA_CUSTOMER_ID and BRIGHTDATA_ZONE_PASSWORD.",
+            "Set BRIGHTDATA_CUSTOMER_ID and BRIGHTDATA_ZONE_PASSWORD.",
             "status_code": 0,
         }
 
@@ -166,6 +169,7 @@ async def brightdata_unlocker_scrape(
 # ────────────────────────────────────────────────────────────────────────────
 #  Tool: brightdata_dataset_fetch
 # ────────────────────────────────────────────────────────────────────────────
+
 
 async def brightdata_dataset_fetch(
     target_type: str,
@@ -225,8 +229,8 @@ BRIGHTDATA_MCP_TOOLS = {
 }
 
 __all__ = [
+    "BRIGHTDATA_MCP_TOOLS",
+    "brightdata_dataset_fetch",
     "brightdata_serp_search",
     "brightdata_unlocker_scrape",
-    "brightdata_dataset_fetch",
-    "BRIGHTDATA_MCP_TOOLS",
 ]

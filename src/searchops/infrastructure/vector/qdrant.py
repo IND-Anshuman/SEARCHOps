@@ -12,7 +12,6 @@ from qdrant_client import AsyncQdrantClient
 from qdrant_client.http import models
 
 from searchops.config.settings import Settings, get_settings
-from searchops.core.exceptions.infrastructure import VectorStoreError
 from searchops.core.interfaces.storage import IVectorStore
 from searchops.llm.tokenizer import truncate_by_tokens
 
@@ -101,12 +100,14 @@ class QdrantVectorRepository(IVectorStore):
                     content = truncate_by_tokens(chunk_text, chunk_tokens)
                     content_hash = hashlib.sha256(content.encode("utf-8")).hexdigest()
                     chunk_id = str(uuid.uuid5(uuid.NAMESPACE_URL, f"{url}:{content_hash}"))
-                    chunks.append({
-                        "chunk_id": chunk_id,
-                        "url": url,
-                        "chunk_index": chunk_index,
-                        "content": content,
-                    })
+                    chunks.append(
+                        {
+                            "chunk_id": chunk_id,
+                            "url": url,
+                            "chunk_index": chunk_index,
+                            "content": content,
+                        }
+                    )
                     chunk_index += 1
 
                 # Carry over overlap paragraphs if requested
@@ -120,7 +121,7 @@ class QdrantVectorRepository(IVectorStore):
                     else:
                         break
 
-                current_paras = overlap_paras + [para]
+                current_paras = [*overlap_paras, para]
                 current_len = sum(len(p) for p in current_paras)
 
         if current_paras:
@@ -129,12 +130,14 @@ class QdrantVectorRepository(IVectorStore):
                 content = truncate_by_tokens(chunk_text, chunk_tokens)
                 content_hash = hashlib.sha256(content.encode("utf-8")).hexdigest()
                 chunk_id = str(uuid.uuid5(uuid.NAMESPACE_URL, f"{url}:{content_hash}"))
-                chunks.append({
-                    "chunk_id": chunk_id,
-                    "url": url,
-                    "chunk_index": chunk_index,
-                    "content": content,
-                })
+                chunks.append(
+                    {
+                        "chunk_id": chunk_id,
+                        "url": url,
+                        "chunk_index": chunk_index,
+                        "content": content,
+                    }
+                )
 
         return chunks
 
@@ -160,7 +163,9 @@ class QdrantVectorRepository(IVectorStore):
     ) -> list[dict[str, Any]]:
         """Perform dense vector search to retrieve top-K relevant chunks."""
         try:
-            results = await self.client.search(
+            # qdrant-client >=1.12 renamed search() to query_points(); the project
+            # pins the older API and the test double mirrors it, so keep .search().
+            results = await self.client.search(  # type: ignore[attr-defined]
                 collection_name=collection_name,
                 query_vector=query_vector,
                 limit=limit,

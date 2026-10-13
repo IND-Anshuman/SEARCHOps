@@ -5,20 +5,20 @@ from __future__ import annotations
 from functools import lru_cache
 from typing import Literal
 
-from pydantic_settings import BaseSettings, SettingsConfigDict
 from pydantic import Field, field_validator
+from pydantic_settings import BaseSettings, SettingsConfigDict
 
-from searchops.config.subsystems.api import APISettings
-from searchops.config.subsystems.database import DatabaseSettings
-from searchops.config.subsystems.cache import CacheSettings
-from searchops.config.subsystems.llm import LLMSettings
-from searchops.config.subsystems.observability import ObservabilitySettings
-from searchops.config.subsystems.security import SecuritySettings
-from searchops.config.subsystems.scraping import ScrapingSettings
 from searchops.config.subsystems.agent import AgentSettings
+from searchops.config.subsystems.api import APISettings
+from searchops.config.subsystems.cache import CacheSettings
+from searchops.config.subsystems.database import DatabaseSettings
 from searchops.config.subsystems.knowledge_graph import KnowledgeGraphSettings
-from searchops.config.subsystems.search import SearchSettings
+from searchops.config.subsystems.llm import LLMSettings
 from searchops.config.subsystems.memory import MemorySettings
+from searchops.config.subsystems.observability import ObservabilitySettings
+from searchops.config.subsystems.scraping import ScrapingSettings
+from searchops.config.subsystems.search import SearchSettings
+from searchops.config.subsystems.security import SecuritySettings
 
 
 class Settings(BaseSettings):

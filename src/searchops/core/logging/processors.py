@@ -10,11 +10,10 @@ Processors are composable and independently testable.
 from __future__ import annotations
 
 import re
-from typing import Any
+from typing import TYPE_CHECKING
 
-import structlog
-from structlog.types import EventDict, WrappedLogger
-
+if TYPE_CHECKING:
+    from structlog.types import EventDict, WrappedLogger
 
 # ── Sensitive field redaction ─────────────────────────────────────────────────
 
@@ -57,6 +56,7 @@ def redact_sensitive_fields(
 
 # ── OpenTelemetry correlation ─────────────────────────────────────────────────
 
+
 def add_open_telemetry_ids(
     logger: WrappedLogger,
     method_name: str,
@@ -91,6 +91,7 @@ def add_open_telemetry_ids(
 
 # ── Request correlation ───────────────────────────────────────────────────────
 
+
 def add_correlation_id(
     logger: WrappedLogger,
     method_name: str,
@@ -124,6 +125,7 @@ def add_correlation_id(
 
 # ── Exception formatting ──────────────────────────────────────────────────────
 
+
 def format_exception_chain(
     logger: WrappedLogger,
     method_name: str,
@@ -137,6 +139,7 @@ def format_exception_chain(
     exc_info = event_dict.pop("exc_info", None)
     if exc_info is True:
         import sys
+
         exc_info = sys.exc_info()
 
     if exc_info and exc_info[0] is not None:
@@ -148,8 +151,7 @@ def format_exception_chain(
         }
         # Keep the full traceback in a separate field for log aggregators
         import traceback
-        event_dict["traceback"] = "".join(
-            traceback.format_exception(exc_type, exc_value, exc_tb)
-        )
+
+        event_dict["traceback"] = "".join(traceback.format_exception(exc_type, exc_value, exc_tb))
 
     return event_dict

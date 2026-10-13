@@ -44,7 +44,7 @@ class DomainConfig:
     """Time to wait before retrying a blocked domain."""
 
     # Default domain configs for common sites - initialized in __post_init__
-    default_config: dict[str, "DomainConfig"] = field(default_factory=dict)
+    default_config: dict[str, DomainConfig] = field(default_factory=dict)
 
     def __post_init__(self) -> None:
         """Initialize default configs after dataclass initialization."""
@@ -111,7 +111,7 @@ class DomainRateLimiter:
             }
         self._domains: dict[str, DomainState] = {}
         self._lock = asyncio.Lock()
-        self._cleanup_task: asyncio.Task | None = None
+        self._cleanup_task: asyncio.Task[None] | None = None
 
     async def check(self, domain: str) -> tuple[bool, float]:
         """
@@ -205,7 +205,9 @@ class DomainRateLimiter:
                     )
                 else:
                     # Calculate exponential backoff
-                    backoff = state.current_backoff * (self.config.backoff_multiplier ** (state.consecutive_failures - 1))
+                    backoff = state.current_backoff * (
+                        self.config.backoff_multiplier ** (state.consecutive_failures - 1)
+                    )
                     backoff = min(backoff, self.config.backoff_max_seconds)
 
                     # Add jitter
@@ -298,9 +300,12 @@ class DomainRateLimiter:
         async with self._lock:
             to_remove = []
             for domain, state in self._domains.items():
-                if state.last_request_time > 0 and (now - state.last_request_time) > max_age_seconds:
-                    if not state.is_blocked and state.consecutive_failures == 0:
-                        to_remove.append(domain)
+                if (
+                    (state.last_request_time > 0 and (now - state.last_request_time) > max_age_seconds)
+                    and not state.is_blocked
+                    and state.consecutive_failures == 0
+                ):
+                    to_remove.append(domain)
 
             for domain in to_remove:
                 del self._domains[domain]

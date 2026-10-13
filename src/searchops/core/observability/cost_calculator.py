@@ -8,6 +8,7 @@ business logic.
 Usage:
     cost = calculate_cost("google", "gemini-1.5-flash", input_tokens=1500, output_tokens=800)
 """
+
 from __future__ import annotations
 
 import structlog
@@ -19,26 +20,26 @@ log = structlog.get_logger(__name__)
 # Update this table as providers change pricing; never hardcode in service code.
 _PRICING: dict[str, tuple[float, float]] = {
     # Google Gemini
-    "gemini-1.5-flash":        (0.075,  0.30),
-    "gemini-1.5-flash-8b":     (0.0375, 0.15),
-    "gemini-1.5-pro":          (1.25,   5.00),
-    "gemini-2.0-flash":        (0.10,   0.40),
-    "gemini-2.5-flash":        (0.15,   0.60),
-    "gemini-2.5-pro":          (1.25,   10.00),
+    "gemini-1.5-flash": (0.075, 0.30),
+    "gemini-1.5-flash-8b": (0.0375, 0.15),
+    "gemini-1.5-pro": (1.25, 5.00),
+    "gemini-2.0-flash": (0.10, 0.40),
+    "gemini-2.5-flash": (0.15, 0.60),
+    "gemini-2.5-pro": (1.25, 10.00),
     # OpenAI
-    "gpt-4o":                  (2.50,   10.00),
-    "gpt-4o-mini":             (0.15,   0.60),
-    "gpt-4-turbo":             (10.00,  30.00),
-    "gpt-3.5-turbo":           (0.50,   1.50),
+    "gpt-4o": (2.50, 10.00),
+    "gpt-4o-mini": (0.15, 0.60),
+    "gpt-4-turbo": (10.00, 30.00),
+    "gpt-3.5-turbo": (0.50, 1.50),
     # Anthropic
-    "claude-3-5-sonnet":       (3.00,   15.00),
-    "claude-3-5-haiku":        (0.80,   4.00),
-    "claude-3-opus":           (15.00,  75.00),
+    "claude-3-5-sonnet": (3.00, 15.00),
+    "claude-3-5-haiku": (0.80, 4.00),
+    "claude-3-opus": (15.00, 75.00),
     # NVIDIA / Llama
-    "llama-3.1-405b-instruct": (5.00,   16.00),
-    "llama-3.1-70b-instruct":  (0.35,   0.40),
+    "llama-3.1-405b-instruct": (5.00, 16.00),
+    "llama-3.1-70b-instruct": (0.35, 0.40),
     # Fallback blended rate for unknown models
-    "_default":                (1.00,   3.00),
+    "_default": (1.00, 3.00),
 }
 
 

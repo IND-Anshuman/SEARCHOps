@@ -4,6 +4,7 @@ Domain-layer exceptions.
 Raised by domain services and aggregates when business rules are violated.
 These exceptions are pure domain concepts and must NOT reference any infrastructure.
 """
+
 from __future__ import annotations
 
 from typing import Any
@@ -13,13 +14,15 @@ from searchops.core.exceptions.base import ErrorCode, NonRetryableError
 
 class DomainError(NonRetryableError):
     """Base class for all domain-layer exceptions."""
+
     code: ErrorCode = ErrorCode.INTERNAL_ERROR
 
 
 class EntityNotFoundError(DomainError):
     """Raised when an expected entity does not exist in the domain."""
+
     code: ErrorCode = ErrorCode.ENTITY_NOT_FOUND
-    
+
     def __init__(
         self,
         entity_type: str,
@@ -37,8 +40,9 @@ class EntityNotFoundError(DomainError):
 
 class DuplicateEntityError(DomainError):
     """Raised when an entity already exists and uniqueness is required."""
+
     code: ErrorCode = ErrorCode.DUPLICATE_ENTITY
-    
+
     def __init__(
         self,
         entity_type: str,
@@ -59,8 +63,9 @@ class DuplicateEntityError(DomainError):
 
 class BusinessRuleViolationError(DomainError):
     """Raised when a business invariant is violated."""
+
     code: ErrorCode = ErrorCode.BUSINESS_RULE_VIOLATION
-    
+
     def __init__(self, rule: str, details: str | None = None, **kwargs: Any) -> None:
         message = f"Business rule violated: {rule}"
         if details:
@@ -71,8 +76,9 @@ class BusinessRuleViolationError(DomainError):
 
 class InvalidStateTransitionError(DomainError):
     """Raised when an aggregate is asked to transition to an illegal state."""
+
     code: ErrorCode = ErrorCode.INVALID_STATE_TRANSITION
-    
+
     def __init__(
         self,
         entity_type: str,

@@ -5,6 +5,7 @@ Shared HTTP Transport Pool managing persistent httpx.AsyncClient connections.
 from __future__ import annotations
 
 import asyncio
+import contextlib
 
 import httpx
 import structlog
@@ -65,10 +66,11 @@ async def close_transport_pool() -> None:
     """Close global httpx connection pool."""
     global _transport_pool, _transport_loop
     if _transport_pool is not None and not _transport_pool.is_closed:
-        try:
+        # A closed event loop raises RuntimeError on teardown; the pool is
+        # already unusable in that case, so there is nothing to recover —
+        # suppressing keeps shutdown from failing over an already-dead pool.
+        with contextlib.suppress(RuntimeError):
             await _transport_pool.aclose()
-        except RuntimeError:
-            pass
         log.info("HTTP Transport Pool closed")
     _transport_pool = None
     _transport_loop = None

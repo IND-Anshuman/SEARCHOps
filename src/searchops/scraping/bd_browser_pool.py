@@ -30,10 +30,11 @@ The pool is injected into BrightDataBrowserScraper as a dependency.
 from __future__ import annotations
 
 import asyncio
+import inspect
 import time
-from contextlib import asynccontextmanager
+from contextlib import asynccontextmanager, suppress
 from dataclasses import dataclass, field
-from typing import AsyncGenerator
+from typing import TYPE_CHECKING, Any, cast
 
 import structlog
 
@@ -44,7 +45,20 @@ from searchops.scraping.bd_metrics import (
     BD_BROWSER_POOL_WAIT,
 )
 
+if TYPE_CHECKING:
+    from collections.abc import AsyncGenerator
+
 log = structlog.get_logger(__name__)
+
+
+async def _close_browser(browser: Any) -> None:
+    """Close a Playwright browser object if it exposes a close() coroutine."""
+    close_fn = cast("Any", getattr(browser, "close", None))
+    if close_fn is None:
+        return
+    result = close_fn()
+    if inspect.isawaitable(result):
+        await result
 
 
 @dataclass
@@ -113,14 +127,17 @@ class BDCDPPool:
         self._pool_lock: asyncio.Lock = asyncio.Lock()
         self._initialized: bool = False
         self._shutdown_event: asyncio.Event = asyncio.Event()
+        # Strong refs to background recycle tasks so the loop doesn't GC them
+        self._recycle_tasks: set[asyncio.Task[None]] = set()
 
         # Credentials — stored transiently, not as loggable attributes
         self._customer_id: str = ""
         self._zone: str = ""
         self._password: str = ""
 
-        # Background maintenance task
-        self._maintenance_task: asyncio.Task | None = None
+        # Background maintenance task; declared here so shutdown() is safe even
+        # when initialize() was never called.
+        self._maintenance_task: asyncio.Task[None] | None = None
 
         BD_BROWSER_POOL_SIZE.set(0)
 
@@ -173,20 +190,13 @@ class BDCDPPool:
 
         if self._maintenance_task and not self._maintenance_task.done():
             self._maintenance_task.cancel()
-            try:
+            with suppress(asyncio.CancelledError):
                 await self._maintenance_task
-            except asyncio.CancelledError:
-                pass
 
         async with self._pool_lock:
             for session in self._sessions:
-                try:
-                    await asyncio.wait_for(
-                        getattr(session.browser, "close", lambda: None)(),
-                        timeout=5.0,
-                    )
-                except Exception:
-                    pass
+                with suppress(Exception):
+                    await asyncio.wait_for(_close_browser(session.browser), timeout=5.0)
             self._sessions.clear()
 
         BD_BROWSER_POOL_SIZE.set(0)
@@ -215,7 +225,7 @@ class BDCDPPool:
                 self._semaphore.acquire(),
                 timeout=self._acquire_timeout,
             )
-        except asyncio.TimeoutError:
+        except TimeoutError:
             log.error("bd_cdp_pool.acquire_timeout", timeout=self._acquire_timeout)
             raise
 
@@ -233,7 +243,9 @@ class BDCDPPool:
 
             # Schedule recycling if needed (don't block the caller)
             if session.request_count >= self._recycle_after:
-                asyncio.create_task(self._recycle_session(session))
+                recycle_task = asyncio.create_task(self._recycle_session(session))
+                self._recycle_tasks.add(recycle_task)
+                recycle_task.add_done_callback(self._recycle_tasks.discard)
 
     async def health_check(self) -> bool:
         """
@@ -252,7 +264,7 @@ class BDCDPPool:
                 return True
             # Try creating a probe session
             session = await asyncio.wait_for(self._create_session(), timeout=10.0)
-            await getattr(session.browser, "close", lambda: None)()
+            await _close_browser(session.browser)
             return True
         except Exception as exc:
             log.warning("bd_cdp_pool.health_check_failed", error=str(exc))
@@ -306,13 +318,8 @@ class BDCDPPool:
                     self._sessions.remove(session)
                     BD_BROWSER_POOL_SIZE.set(len(self._sessions))
 
-            try:
-                await asyncio.wait_for(
-                    getattr(session.browser, "close", lambda: None)(),
-                    timeout=5.0,
-                )
-            except Exception:
-                pass
+            with suppress(Exception):
+                await asyncio.wait_for(_close_browser(session.browser), timeout=5.0)
 
             new_session = await self._create_session()
             async with self._pool_lock:

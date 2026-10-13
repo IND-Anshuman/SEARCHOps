@@ -1,9 +1,10 @@
 """
 Base Entity for DDD.
 """
+
 from __future__ import annotations
 
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from typing import Any
 
 import shortuuid
@@ -17,13 +18,13 @@ def _generate_id() -> str:
 
 def _now() -> datetime:
     """Return current UTC datetime."""
-    return datetime.now(timezone.utc)
+    return datetime.now(UTC)
 
 
 class BaseEntity(BaseModel):
     """
     Base class for all domain entities.
-    
+
     Entities have identity and mutability. Equality is based purely on ID.
     """
 

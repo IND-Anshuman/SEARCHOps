@@ -2,8 +2,8 @@
 
 from __future__ import annotations
 
+from pydantic import Field, SecretStr, field_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
-from pydantic import Field, field_validator, SecretStr
 
 
 class ObservabilitySettings(BaseSettings):

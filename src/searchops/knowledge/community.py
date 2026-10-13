@@ -7,7 +7,7 @@ and generates abstractive community summaries for global dataset understanding.
 
 from __future__ import annotations
 
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
 try:
     import networkx as nx
@@ -16,8 +16,9 @@ except ImportError:
 
 import structlog
 
-from searchops.knowledge.domain.entity import KGEntity, KGRelation
-from searchops.llm.router import LLMRouter
+if TYPE_CHECKING:
+    from searchops.knowledge.domain.entity import KGEntity, KGRelation
+    from searchops.llm.router import LLMRouter
 
 log = structlog.get_logger(__name__)
 
@@ -79,7 +80,9 @@ class HierarchicalCommunityDetector:
                 log.warning("Louvain community detection fallback to connected components", error=str(exc))
                 clusters = []
                 for idx, comm_nodes in enumerate(nx.connected_components(G)):
-                    clusters.append(CommunityCluster(community_id=f"community:l1:{idx}", level=1, members=list(comm_nodes)))
+                    clusters.append(
+                        CommunityCluster(community_id=f"community:l1:{idx}", level=1, members=list(comm_nodes))
+                    )
                 return clusters
 
         # Adjacency dict fallback
@@ -109,7 +112,10 @@ class HierarchicalCommunityDetector:
                     model="gemini-1.5-flash",
                 )
             except Exception as exc:
-                log.warning("Failed to generate LLM community summary, using template fallback", error=str(exc))
+                log.warning(
+                    "Failed to generate LLM community summary, using template fallback",
+                    error=str(exc),
+                )
 
         cluster.summary = summary_text
         return summary_text

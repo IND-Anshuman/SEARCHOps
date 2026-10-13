@@ -4,31 +4,39 @@ Neo4j Graph Database Driver wrapper.
 
 from __future__ import annotations
 
+from typing import Any
+
 import structlog
 from neo4j import AsyncDriver, AsyncGraphDatabase
 
 from searchops.config.settings import Settings, get_settings
-from searchops.core.exceptions.infrastructure import GraphDatabaseError
 
 log = structlog.get_logger(__name__)
 
-_neo4j_driver: AsyncDriver | None = None
+_neo4j_driver: AsyncDriver | MockNeo4jDriver | None = None
 
 
 class MockNeo4jSession:
     """Mock Neo4j session for offline database-free execution."""
+
     async def __aenter__(self) -> MockNeo4jSession:
         return self
 
-    async def __aexit__(self, exc_type, exc_val, exc_tb) -> None:
+    async def __aexit__(
+        self,
+        exc_type: type[BaseException] | None,
+        exc_val: BaseException | None,
+        exc_tb: object | None,
+    ) -> None:
         pass
 
-    async def run(self, *args, **kwargs) -> MockNeo4jResult:
+    async def run(self, *args: Any, **kwargs: Any) -> MockNeo4jResult:
         return MockNeo4jResult()
 
 
 class MockNeo4jResult:
     """Mock Neo4j result iterator."""
+
     async def single(self) -> None:
         return None
 
@@ -41,7 +49,8 @@ class MockNeo4jResult:
 
 class MockNeo4jDriver:
     """Mock Neo4j driver context manager."""
-    def session(self, **kwargs) -> MockNeo4jSession:
+
+    def session(self, **kwargs: Any) -> MockNeo4jSession:
         return MockNeo4jSession()
 
     async def close(self) -> None:
@@ -59,7 +68,7 @@ def get_neo4j_driver(settings: Settings | None = None) -> AsyncDriver | MockNeo4
 
     if kg_cfg.neo4j_uri == "mock":
         log.info("Initializing in-memory mock Neo4j driver")
-        _neo4j_driver = MockNeo4jDriver()  # type: ignore
+        _neo4j_driver = MockNeo4jDriver()
     else:
         _neo4j_driver = AsyncGraphDatabase.driver(
             kg_cfg.neo4j_uri,

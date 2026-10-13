@@ -16,7 +16,6 @@ from __future__ import annotations
 
 from prometheus_client import (
     REGISTRY,
-    CollectorRegistry,
     Counter,
     Gauge,
     Histogram,

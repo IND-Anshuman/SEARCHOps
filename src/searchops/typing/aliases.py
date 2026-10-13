@@ -4,6 +4,7 @@ Type aliases for domain identifiers.
 Using distinct type aliases for each identifier type prevents accidental
 mixing of IDs across domain boundaries (UserId != AgentId).
 """
+
 from __future__ import annotations
 
 from typing import TypeAlias

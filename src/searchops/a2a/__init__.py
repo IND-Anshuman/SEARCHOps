@@ -5,8 +5,8 @@ from searchops.a2a.protocol.envelopes import A2AMessageEnvelope, A2AMessageType
 from searchops.a2a.router.router import A2AMessageRouter
 
 __all__ = [
-    "A2AMessageType",
+    "A2AHandshakeManager",
     "A2AMessageEnvelope",
     "A2AMessageRouter",
-    "A2AHandshakeManager",
+    "A2AMessageType",
 ]

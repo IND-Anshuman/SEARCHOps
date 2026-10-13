@@ -15,21 +15,22 @@ Security model:
 
 from __future__ import annotations
 
-import ssl
 import re
-from typing import Generator
+import ssl
+from typing import TYPE_CHECKING
 
 import certifi
 import httpx
 import structlog
 
+if TYPE_CHECKING:
+    from collections.abc import Generator
+
 log = structlog.get_logger(__name__)
 
 # Pattern matching BD-style credentials embedded in URLs/strings
 # Matches: brd-customer-<id>-zone-<zone>:<password>
-_BD_CRED_RE = re.compile(
-    r"(brd-customer-[^:@\s]+-zone-[^:@\s]+):([^@\s]+)@"
-)
+_BD_CRED_RE = re.compile(r"(brd-customer-[^:@\s]+-zone-[^:@\s]+):([^@\s]+)@")
 
 
 def mask_bd_credential(value: str) -> str:
@@ -82,14 +83,11 @@ class BrightDataProxyAuth(httpx.Auth):
         self._username = username.encode()
         self._password = password.encode()
 
-    def auth_flow(
-        self, request: httpx.Request
-    ) -> Generator[httpx.Request, httpx.Response, None]:
+    def auth_flow(self, request: httpx.Request) -> Generator[httpx.Request, httpx.Response, None]:
         """Inject Proxy-Authorization header into each outgoing request."""
         import base64
-        token = base64.b64encode(
-            self._username + b":" + self._password
-        ).decode("ascii")
+
+        token = base64.b64encode(self._username + b":" + self._password).decode("ascii")
         request.headers["Proxy-Authorization"] = f"Basic {token}"
         yield request
 
