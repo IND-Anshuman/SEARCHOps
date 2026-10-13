@@ -34,6 +34,90 @@ def build_scrape_excerpt(doc: dict[str, Any], max_tokens: int = 800) -> str:
     return f"URL: {doc.get('url', 'unknown')}\nTitle: {doc.get('title', '')}\n\n{truncated_content}"
 
 
+# ── Sectioned report synthesis ────────────────────────────────────────────────
+#
+# A single call cannot produce a long report: the output is bounded by
+# max_tokens (4096 by default), which is roughly two pages of prose no matter
+# how much evidence is in the prompt. Asking a model for a 25-page document in
+# one request produces a truncated section and a mid-sentence stop.
+#
+# Instead the report is written one section at a time. Each call gets the
+# evidence relevant to ITS section, so a 30-source corpus is spread across
+# calls rather than one call trying to carry all of it and overflowing.
+#
+# Sections are keyed by name so a failed section can be retried or skipped
+# without re-running the sections that succeeded.
+
+REPORT_SECTIONS: tuple[str, ...] = (
+    "Executive Summary",
+    "Background and Landscape",
+    "Technical Deep Dive",
+    "Comparative Analysis",
+    "Case Studies and Real-World Data",
+    "Security and Operational Implications",
+    "Strategic Recommendations",
+    "Conclusion",
+)
+
+
+def build_section_prompt(
+    query: str,
+    section: str,
+    entities: list[Any],
+    scraped: list[Any],
+    *,
+    outline: str = "",
+    model_name: str = "gpt-4o",
+) -> str:
+    """Build the user prompt for ONE report section.
+
+    Each section receives the evidence budget independently. That is the whole
+    point: a section that gets 800 tokens of its own sources can be written in
+    full, where a shared 24k pool spread over eight sections starves every one
+    of them.
+
+    Returns just the user prompt. The system prompt is constant across sections
+    and supplied by ``SECTION_SYSTEM_PROMPT`` so it can be cached.
+    """
+    doc_slice = scraped[:MAX_EXCERPT_DOCS]
+    excerpts = "\n\n---\n\n".join(build_scrape_excerpt(doc) for doc in doc_slice)
+    entity_lines = (
+        "\n".join(
+            f"- {e.name} ({getattr(e, 'entity_type', 'Entity')}): {getattr(e, 'description', '')}"
+            for e in entities[:MAX_ENTITY_ROWS]
+        )
+        or "None extracted"
+    )
+
+    outline_block = f"\nReport outline:\n{outline}\n" if outline else ""
+
+    return (
+        f"Query: {query}\n"
+        f"{outline_block}\n"
+        f"You are writing ONLY the section titled: {section}\n"
+        f"Do not write any other section. Do not add a report-level title.\n\n"
+        f"Key Entities:\n{entity_lines}\n\n"
+        f"Source Excerpts:\n{excerpts}\n\n"
+        f"Write the '{section}' section now in Markdown, starting with its own "
+        f"'## {section}' heading. Be specific and cite sources as [n]."
+    )
+
+
+SECTION_SYSTEM_PROMPT = (
+    "You are a principal research scientist writing one section of a "
+    "publication-grade research report.\n\n"
+    "Rules for this section:\n"
+    "1. Open with a '## <section name>' heading.\n"
+    "2. Write substantial prose with concrete numbers, trade-offs and examples "
+    "drawn from the evidence provided.\n"
+    "3. Never invent facts, figures or sources that are not in the evidence.\n"
+    "4. Cite the evidence as [1], [2] ... matching the excerpt order.\n"
+    "5. Do not summarise the whole report or write other sections.\n"
+    "6. If the evidence is thin for this section, say so explicitly rather "
+    "than padding with speculation."
+)
+
+
 def build_report_prompt(
     query: str,
     entities: list[Any],
