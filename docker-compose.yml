@@ -147,7 +147,7 @@ services:
       - "8080:8080"
     volumes:
       # settings.yml enables format=json and disables the limiter.
-      - ./config/searxng:/etc/searxng:ro
+      - ./config/searxng:/etc/searxng
     environment:
       SEARXNG_BASE_URL: "http://localhost:8080/"
     cap_drop:

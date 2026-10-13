@@ -53,11 +53,15 @@ class SearXNGSearchProvider(ISearchProvider):
         if not clean_query:
             return []
 
-        url = f"{self.base_url}/"
+        url = f"{self.base_url}/search"
         params: dict[str, str | int] = {"q": clean_query, "format": "json", "pageno": 1}
 
         try:
-            async with httpx.AsyncClient(timeout=self.settings.search_timeout, verify=self.verify_ssl) as client:
+            async with httpx.AsyncClient(
+                timeout=self.settings.search_timeout,
+                verify=self.verify_ssl,
+                follow_redirects=True,
+            ) as client:
                 resp = await client.get(url, params=params)
                 if resp.status_code != 200:
                     log.error("SearXNG search failed", status=resp.status_code, body=resp.text[:200])
