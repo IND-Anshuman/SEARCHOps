@@ -4,10 +4,13 @@ Redis-backed Event Bus for Domain Event Pub/Sub.
 
 from __future__ import annotations
 
+from typing import Any
+
 import orjson
 import structlog
 
 from searchops.infrastructure.cache.redis import RedisCache, get_redis_client
+from searchops.shared.json_safe import json_safe
 
 log = structlog.get_logger(__name__)
 
@@ -18,10 +21,10 @@ class RedisEventBus:
     def __init__(self, cache: RedisCache | None = None) -> None:
         self.cache = cache or RedisCache(get_redis_client())
 
-    async def publish(self, channel: str, event_data: dict) -> None:
+    async def publish(self, channel: str, event_data: dict[str, Any]) -> None:
         """Publish event payload to Redis channel."""
         try:
-            payload = orjson.dumps(event_data)
+            payload = orjson.dumps(json_safe(event_data))
             await self.cache.client.publish(channel, payload)
             log.info("Published domain event", channel=channel)
         except Exception as exc:

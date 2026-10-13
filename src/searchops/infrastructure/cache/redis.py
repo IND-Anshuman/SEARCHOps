@@ -14,9 +14,9 @@ import redis.asyncio as aioredis
 import structlog
 
 from searchops.config.settings import Settings, get_settings
-from searchops.core.exceptions.infrastructure import CacheError
 from searchops.core.interfaces.memory import ICache
 from searchops.core.interfaces.storage import ICacheStore
+from searchops.shared.json_safe import json_safe
 
 log = structlog.get_logger(__name__)
 
@@ -73,7 +73,7 @@ class RedisCache(ICache, ICacheStore):
     ) -> bool:
         """Set key-value pair with optional TTL."""
         try:
-            payload = orjson.dumps(value)
+            payload = orjson.dumps(json_safe(value))
             if ttl_seconds:
                 await self.client.setex(key, ttl_seconds, payload)
             else:
@@ -112,6 +112,35 @@ class RedisCache(ICache, ICacheStore):
             return 0
         except Exception as exc:
             log.warning("Cache clear_prefix error", prefix=prefix, error=str(exc))
+            return 0
+
+    async def increment(self, key: str, amount: int = 1) -> int:
+        """Atomically increment a counter. Returns the new value."""
+        try:
+            return int(await self.client.incrby(key, amount))
+        except Exception as exc:
+            log.warning("Cache increment error", key=key, error=str(exc))
+            return 0
+
+    async def expire(self, key: str, ttl_seconds: int) -> bool:
+        """Set a TTL on an existing key. Returns True if key was found."""
+        try:
+            return bool(await self.client.expire(key, ttl_seconds))
+        except Exception as exc:
+            log.warning("Cache expire error", key=key, error=str(exc))
+            return False
+
+    async def flush_pattern(self, pattern: str) -> int:
+        """Delete all keys matching a glob pattern. Returns count deleted."""
+        try:
+            keys: list[bytes] = []
+            async for k in self.client.scan_iter(match=pattern):
+                keys.append(k)
+            if keys:
+                return int(await self.client.delete(*keys))
+            return 0
+        except Exception as exc:
+            log.warning("Cache flush_pattern error", pattern=pattern, error=str(exc))
             return 0
 
 
