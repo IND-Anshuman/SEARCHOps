@@ -55,7 +55,9 @@ REPORT_SECTIONS: tuple[str, ...] = (
     "Comparative Analysis",
     "Case Studies and Real-World Data",
     "Security and Operational Implications",
+    "Risks, Limitations and Open Questions",
     "Strategic Recommendations",
+    "Implementation Roadmap",
     "Conclusion",
 )
 
@@ -95,11 +97,16 @@ def build_section_prompt(
         f"Query: {query}\n"
         f"{outline_block}\n"
         f"You are writing ONLY the section titled: {section}\n"
-        f"Do not write any other section. Do not add a report-level title.\n\n"
+        f"Do not write any other section. Do not add a report-level title.\n"
+        f"Do NOT repeat the section title inside the body — the heading is added "
+        f"for you; start immediately with the prose.\n\n"
         f"Key Entities:\n{entity_lines}\n\n"
         f"Source Excerpts:\n{excerpts}\n\n"
-        f"Write the '{section}' section now in Markdown, starting with its own "
-        f"'## {section}' heading. Be specific and cite sources as [n]."
+        f"Write the '{section}' section now in Markdown. Aim for 400-700 words of "
+        f"specific, substantive prose. The excerpts above ARE your evidence base — "
+        f"draw concrete details, trade-offs and examples from them and cite as [n]. "
+        f"Only flag a specific point as uncovered if the excerpts genuinely say "
+        f"nothing about it, and keep writing everything else."
     )
 
 
@@ -113,8 +120,11 @@ SECTION_SYSTEM_PROMPT = (
     "3. Never invent facts, figures or sources that are not in the evidence.\n"
     "4. Cite the evidence as [1], [2] ... matching the excerpt order.\n"
     "5. Do not summarise the whole report or write other sections.\n"
-    "6. If the evidence is thin for this section, say so explicitly rather "
-    "than padding with speculation."
+    "6. The excerpts supplied ARE your evidence base. Work from them: state what "
+    "they establish, name the trade-offs they describe, and quote specific "
+    "figures or examples where present. Absence of detail is the exception, not "
+    "the default response — only note it for a specific point the sources "
+    "genuinely do not cover, and keep writing the rest."
 )
 
 

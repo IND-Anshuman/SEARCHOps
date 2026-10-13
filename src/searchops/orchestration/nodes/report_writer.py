@@ -33,9 +33,10 @@ if TYPE_CHECKING:
 
 log = structlog.get_logger(__name__)
 
-# Per-section output ceiling. Higher than a whole-report call's would be,
-# because one section does not have to leave room for seven others.
-_SECTION_MAX_TOKENS = 3000
+# Per-section output ceiling. 4000 tokens supports the 400-700 word target with
+# headroom for Markdown structure, where 3000 truncated mid-paragraph on the
+# longer technical sections.
+_SECTION_MAX_TOKENS = 4000
 
 
 async def report_writer_node(
