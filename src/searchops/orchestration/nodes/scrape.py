@@ -60,9 +60,13 @@ async def scrape_node(
     pipeline: ScrapingPipeline,
 ) -> ResearchState:
     """Scrape ``urls_to_scrape``, crawling further when the plan says to."""
-    plan = state.get("scrape_plan") or {}
-    config = CrawlConfig.from_scrape_plan(plan)
-    max_pages = config.max_pages if (config and config.max_pages > 0) else 25
+    plan = state.get("scrape_plan")
+    if plan:
+        config = CrawlConfig.from_scrape_plan(plan)
+        max_pages = config.max_pages if config.max_pages > 0 else _MAX_URLS
+    else:
+        config = CrawlConfig()
+        max_pages = _MAX_URLS  # free-tier default cap when no scrape_plan is configured
 
     urls = state.get("urls_to_scrape", [])[:max_pages]
     log.info("Scrape node executing", seed_count=len(urls), max_pages=max_pages)
