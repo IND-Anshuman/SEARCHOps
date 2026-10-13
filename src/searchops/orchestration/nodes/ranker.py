@@ -5,11 +5,14 @@ Ranker & Deduplicator node: applies Reciprocal Rank Fusion (RRF) and Canonical U
 from __future__ import annotations
 
 import hashlib
-import structlog
+from typing import TYPE_CHECKING
 from urllib.parse import urlparse
 
-from searchops.orchestration.states.research_state import ResearchState
-from searchops.search.contracts import SearchResultItem
+import structlog
+
+if TYPE_CHECKING:
+    from searchops.orchestration.states.research_state import ResearchState
+    from searchops.search.contracts import SearchResultItem
 
 log = structlog.get_logger(__name__)
 
@@ -60,7 +63,13 @@ def rank_and_deduplicate(
 async def ranker_node(state: ResearchState) -> ResearchState:
     """Node dispatcher for ranking and deduplicating aggregated search results."""
     search_results = state.get("search_results", [])
-    max_sources = min(state.get("max_sources", 5), 10)
+    scrape_plan = state.get("scrape_plan") or {}
+    req_pages = (
+        scrape_plan.get("max_pages", 15)
+        if isinstance(scrape_plan, dict)
+        else getattr(scrape_plan, "max_pages", 15)
+    )
+    max_sources = max(state.get("max_sources", 10), req_pages)
 
     log.info("Ranker node executing", total_raw_results=len(search_results), top_k=max_sources)
     ranked = rank_and_deduplicate(search_results, top_k=max_sources)
@@ -68,4 +77,4 @@ async def ranker_node(state: ResearchState) -> ResearchState:
     urls = [item.url for item in ranked if item.url]
     log.info("Ranker node complete", deduplicated_results=len(ranked), unique_urls=len(urls))
 
-    return {"urls_to_scrape": urls}  # type: ignore[misc]
+    return {"urls_to_scrape": urls}

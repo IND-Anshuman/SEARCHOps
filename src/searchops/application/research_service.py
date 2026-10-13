@@ -172,11 +172,19 @@ class ResearchApplicationService:
                     job_id=job_id,
                     error=str(exc),
                 )
-                task = asyncio.create_task(self._execute_research(job_id, query, depth, max_sources, exec_ctx))
+                task = asyncio.create_task(
+                    self._execute_research(
+                        job_id, query, depth, max_sources, exec_ctx, plan.model_dump(mode="json")
+                    )
+                )
                 self._bg_tasks.add(task)
                 task.add_done_callback(self._bg_tasks.discard)
         else:
-            task = asyncio.create_task(self._execute_research(job_id, query, depth, max_sources, exec_ctx))
+            task = asyncio.create_task(
+                self._execute_research(
+                    job_id, query, depth, max_sources, exec_ctx, plan.model_dump(mode="json")
+                )
+            )
             self._bg_tasks.add(task)
             task.add_done_callback(self._bg_tasks.discard)
         log.info("Research job created", job_id=job_id, query=query)
@@ -195,6 +203,7 @@ class ResearchApplicationService:
         depth: str,
         max_sources: int,
         context: ExecutionContext,
+        scrape_plan: dict[str, Any] | None = None,
     ) -> None:
         """Run the LangGraph pipeline and persist state after every node."""
         nodes_map: dict[str, dict[str, Any]] = {
@@ -268,6 +277,7 @@ class ResearchApplicationService:
                 "query": query,
                 "depth": ResearchDepth(depth),
                 "max_sources": max_sources,
+                "scrape_plan": scrape_plan or {},
                 "correlation_id": context.correlation_id,
                 "iteration": 0,
             }

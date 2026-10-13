@@ -28,6 +28,21 @@ from searchops.application.report_document import (
 log = structlog.get_logger(__name__)
 
 
+def _clean_markdown(text: str) -> str:
+    """Sanitize markdown formatting syntax into clean document text."""
+    if not text:
+        return ""
+    text = re.sub(r"^#+\s*", "", text)
+    text = re.sub(r"\*\*([^*]+)\*\*", r"\1", text)
+    text = re.sub(r"__([^_]+)__", r"\1", text)
+    text = re.sub(r"(?<!\*)\*([^*]+)\*(?!\*)", r"\1", text)
+    text = re.sub(r"(?<!_)_([^_]+)_(?!_)", r"\1", text)
+    text = re.sub(r"\[([^\]]+)\]\(([^)]+)\)", r"\1 (\2)", text)
+    text = re.sub(r"`([^`]+)`", r"\1", text)
+    text = re.sub(r"^>\s*", "", text)
+    return text.strip()
+
+
 def export_docx(
     doc: ReportDocument,
     *,
@@ -92,7 +107,7 @@ def _footnote_text(doc: ReportDocument, block: ReportBlock) -> str:
 def _render_block(document: Document, block: ReportBlock, doc: ReportDocument) -> None:
     if block.kind is BlockKind.HEADING:
         level = min(block.level or 2, 9)
-        document.add_heading(block.text.lstrip("# ").strip(), level=level)
+        document.add_heading(_clean_markdown(block.text), level=level)
         return
 
     if block.kind is BlockKind.SOURCE:
@@ -100,11 +115,11 @@ def _render_block(document: Document, block: ReportBlock, doc: ReportDocument) -
 
     if block.kind is BlockKind.LIST:
         for line in block.text.split("\n"):
-            item = line.lstrip("-*• ").strip()
+            item = _clean_markdown(line)
             if item:
                 document.add_paragraph(item, style="List Bullet")
     elif block.kind is BlockKind.QUOTE:
-        p = document.add_paragraph(block.text.lstrip("> ").strip())
+        p = document.add_paragraph(_clean_markdown(block.text))
         p.style = document.styles["Intense Quote"] if "Intense Quote" in [s.name for s in document.styles] else p.style
     elif block.kind is BlockKind.CODE:
         p = document.add_paragraph(block.text.strip("`"))
@@ -112,7 +127,7 @@ def _render_block(document: Document, block: ReportBlock, doc: ReportDocument) -
             run.font.name = "Consolas"
             run.font.size = Pt(9)
     else:
-        document.add_paragraph(block.text.strip())
+        document.add_paragraph(_clean_markdown(block.text))
 
     footnote = _footnote_text(doc, block)
     if footnote:

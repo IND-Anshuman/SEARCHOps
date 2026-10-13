@@ -6,13 +6,18 @@ from __future__ import annotations
 
 import asyncio
 import time
+from typing import TYPE_CHECKING, Any
+
 import structlog
 
 from searchops.core.context.research import SearchExecution
-from searchops.orchestration.states.research_state import ResearchState
-from searchops.search.orchestrator import SearchOrchestrator, search_orchestrator
+from searchops.core.exceptions.application import UseCaseError
 from searchops.search.contracts import SearchQuery, SearchResultItem
 from searchops.search.domain.models import SearchProfile
+from searchops.search.orchestrator import SearchOrchestrator, search_orchestrator
+
+if TYPE_CHECKING:
+    from searchops.orchestration.states.research_state import ResearchState
 
 log = structlog.get_logger(__name__)
 
@@ -27,7 +32,13 @@ async def search_node(
     query = state.get("query", "")
     plan = state.get("plan")
     budget = state.get("budget")
-    max_sources = min(state.get("max_sources", 5), 5)  # free-tier cap
+    scrape_plan = state.get("scrape_plan") or {}
+    req_pages = (
+        scrape_plan.get("max_pages", 15)
+        if isinstance(scrape_plan, dict)
+        else getattr(scrape_plan, "max_pages", 15)
+    )
+    max_sources = max(state.get("max_sources", 10), req_pages)
 
     # Extract target queries from ResearchPlan or fallback to primary query
     target_queries: list[str] = []
@@ -38,12 +49,12 @@ async def search_node(
 
     # Enforce remaining search budget
     if budget and budget.remaining_searches > 0:
-        target_queries = target_queries[:budget.remaining_searches]
+        target_queries = target_queries[: budget.remaining_searches]
 
     log.info("Search node executing", primary_query=query, total_queries=len(target_queries))
 
     if not target_queries:
-        return {"search_results": [], "search_executions": [], "urls_to_scrape": []}  # type: ignore[misc]
+        return {"search_results": [], "search_executions": [], "urls_to_scrape": []}
 
     _orch = orchestrator or aggregator or search_orchestrator
     executions: list[SearchExecution] = []
@@ -56,10 +67,10 @@ async def search_node(
         try:
             # Dispatch to orchestrator using DEEP profile
             search_q = SearchQuery(query=q, max_results=max_sources, profile=SearchProfile.DEEP)
-            if hasattr(_orch, "search"):
-                res = await _orch.search(search_q)
-            else:
-                res = await _orch.aggregate_search(search_q)
+            search_fn = getattr(_orch, "search", None) or getattr(_orch, "aggregate_search", None)
+            if search_fn is None:
+                raise UseCaseError("No search method available on orchestrator")
+            res: list[SearchResultItem] = await search_fn(search_q)
             elapsed_ms = (time.perf_counter() - start_time) * 1000.0
             # Dynamic API pricing calculation ($0.0002 per result returned + $0.0001 query base cost)
             dynamic_cost = round(0.0001 + (len(res) * 0.0002), 6)
@@ -88,11 +99,14 @@ async def search_node(
                     seen_urls.add(item.url)
                     urls.append(item.url)
 
-    log.info("Search node complete", total_results=len(all_results), unique_urls=len(urls), executions=len(executions))
+    log.info(
+        "Search node complete",
+        total_results=len(all_results),
+        unique_urls=len(urls),
+        executions=len(executions),
+    )
     return {
         "search_results": all_results,
         "search_executions": executions,
         "urls_to_scrape": urls,
-    }  # type: ignore[misc]
-
-
+    }

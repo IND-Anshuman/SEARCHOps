@@ -21,6 +21,7 @@ Design notes:
 
 from __future__ import annotations
 
+import re
 from pathlib import Path  # noqa: TC003 — used at runtime for out_dir.mkdir()
 
 import structlog
@@ -37,6 +38,30 @@ from searchops.application.report_document import (
 log = structlog.get_logger(__name__)
 
 _MAX_BULLETS_PER_SLIDE = 8
+
+
+def _clean_markdown(text: str) -> str:
+    """Sanitize markdown formatting syntax into clean presentation text."""
+    if not text:
+        return ""
+    # Strip markdown headers at start of line
+    text = re.sub(r"^#+\s*", "", text)
+    # Strip bold and italics: **text**, __text__, *text*, _text_
+    text = re.sub(r"\*\*([^*]+)\*\*", r"\1", text)
+    text = re.sub(r"__([^_]+)__", r"\1", text)
+    text = re.sub(r"(?<!\*)\*([^*]+)\*(?!\*)", r"\1", text)
+    text = re.sub(r"(?<!_)_([^_]+)_(?!_)", r"\1", text)
+    # Convert markdown links [text](url) -> text
+    text = re.sub(r"\[([^\]]+)\]\([^)]+\)", r"\1", text)
+    # Strip inline backticks `code` -> code
+    text = re.sub(r"`([^`]+)`", r"\1", text)
+    # Strip blockquote markers
+    text = re.sub(r"^>\s*", "", text)
+    # Clean bullet markers at start of string
+    text = re.sub(r"^[-*•\d\.]+\s*", "", text)
+    # Normalize excessive whitespace
+    text = re.sub(r"[ \t]+", " ", text).strip()
+    return text
 
 
 def export_deck(
@@ -130,7 +155,8 @@ def _group_by_heading(doc: ReportDocument) -> list[tuple[str, list[ReportBlock]]
 
     for block in doc.visible_blocks():
         if block.kind is BlockKind.HEADING:
-            current = (block.text.lstrip("# ").strip(), [])
+            clean_h = _clean_markdown(block.text)
+            current = (clean_h or "Section", [])
             sections.append(current)
         elif block.kind is BlockKind.SOURCE:
             continue  # collected into the Sources slide
@@ -156,7 +182,7 @@ def _add_content_slide(
         return
 
     slide = prs.slides.add_slide(prs.slide_layouts[1])
-    slide.shapes.title.text = heading or "Details"
+    slide.shapes.title.text = _clean_markdown(heading) or "Details"
     body = slide.placeholders[1].text_frame
     body.text = bullets[0]
     for line in bullets[1:]:
@@ -175,8 +201,24 @@ def _bullets_for(block: ReportBlock) -> list[str]:
     if not text:
         return []
     if block.kind is BlockKind.LIST:
-        return [ln.lstrip("-*• ").strip() for ln in text.split("\n") if ln.strip().lstrip("-*• ").strip()]
-    return [text]
+        raw_lines = text.split("\n")
+        cleaned_bullets: list[str] = []
+        for ln in raw_lines:
+            c = _clean_markdown(ln)
+            if c:
+                cleaned_bullets.append(c)
+        return cleaned_bullets
+
+    cleaned = _clean_markdown(text)
+    if not cleaned:
+        return []
+    # If paragraph is long, split into concise presentation sentences
+    if len(cleaned) > 200:
+        sentences = re.split(r"(?<=[.!?])\s+", cleaned)
+        valid = [s.strip() for s in sentences if len(s.strip()) > 10]
+        if len(valid) > 1:
+            return valid[:_MAX_BULLETS_PER_SLIDE]
+    return [cleaned]
 
 
 def _add_sources_slide(prs: Presentation, doc: ReportDocument) -> None:

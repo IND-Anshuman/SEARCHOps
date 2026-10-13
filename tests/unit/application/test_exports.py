@@ -208,3 +208,22 @@ def test_both_exporters_agree_on_visible_content(tmp_path):
     docx_text = "\n".join(p.text for p in Document(str(export_docx(doc, out_dir=tmp_path, title="T"))).paragraphs)
     assert "Surface codes are the leading approach." in pptx_text
     assert "Surface codes are the leading approach." in docx_text
+
+
+def test_export_deck_strips_raw_markdown_syntax(tmp_path):
+    md = (
+        "# **Quantum Error Correction**\n\n"
+        "## ### Executive Summary\n\n"
+        "- **Key Finding**: Surface codes show *promising* results with `O(d^2)` scaling [Source](https://example.com).\n\n"
+        "## Sources\n\n- https://example.com\n"
+    )
+    doc = ReportDocument.from_markdown("job_md", "qec", md)
+    out = export_deck(doc, out_dir=tmp_path, title="Clean Presentation")
+    from pptx import Presentation
+
+    prs = Presentation(str(out))
+    text = _all_text(prs)
+    assert "**" not in text
+    assert "###" not in text
+    assert "`" not in text
+    assert "Key Finding: Surface codes show promising results with O(d^2) scaling Source" in text

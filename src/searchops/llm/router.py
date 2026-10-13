@@ -20,7 +20,7 @@ Free-tier protections applied on every call:
 
 from __future__ import annotations
 
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
 import structlog
 from langchain_anthropic import ChatAnthropic
@@ -36,32 +36,36 @@ from searchops.core.observability.metrics import (
     LLM_TOKENS_TOTAL,
 )
 from searchops.llm.budget import LLMBudgetTracker
-from searchops.llm.cache import LLMResponseCache
 from searchops.llm.tokenizer import count_tokens
+
+if TYPE_CHECKING:
+    from searchops.llm.cache import LLMResponseCache
 
 log = structlog.get_logger(__name__)
 
 # ── Provider detection helpers ─────────────────────────────────────────────────
 
+
 def _is_claude(model: str) -> bool:
     return "claude" in model.lower()
+
 
 def _is_gemini(model: str) -> bool:
     return "gemini" in model.lower()
 
+
 def _is_nvidia(model: str) -> bool:
     # NVIDIA NIM models
     m = model.lower()
-    return m.startswith("nvidia/") or "nemotron" in m or "llama" in m or "deepseek" in m or "mistral" in m or "meta/" in m
+    return (
+        m.startswith("nvidia/") or "nemotron" in m or "llama" in m or "deepseek" in m or "mistral" in m or "meta/" in m
+    )
+
 
 def _is_glm(model: str) -> bool:
     m = model.lower()
-    return (
-        m.startswith("glm")
-        or "zhipu" in m
-        or "zai" in m
-        or "codegeex" in m
-    )
+    return m.startswith("glm") or "zhipu" in m or "zai" in m or "codegeex" in m
+
 
 def _is_bedrock(model: str) -> bool:
     # Bedrock model IDs always contain a dot, e.g. anthropic.claude-…
@@ -80,7 +84,7 @@ class LLMRouter:
         cfg = settings or get_settings()
         self.settings = cfg.llm
         self.cache = cache
-        self._models_cache: dict[tuple[str, float], Any] = {}
+        self._models_cache: dict[tuple[str, float, int | None], Any] = {}
 
     # ── Provider factory ───────────────────────────────────────────────────
 
@@ -101,7 +105,7 @@ class LLMRouter:
                 raise ImportError(
                     "Install langchain-nvidia-ai-endpoints: uv add langchain-nvidia-ai-endpoints"
                 ) from exc
-            model = ChatNVIDIA(
+            model: Any = ChatNVIDIA(
                 model=model_name,
                 temperature=temperature,
                 max_tokens=max_tok,
@@ -113,7 +117,7 @@ class LLMRouter:
             clean_model = model_name
             for prefix in ("zhipu/", "zai/", "z.ai/"):
                 if clean_model.lower().startswith(prefix):
-                    clean_model = clean_model[len(prefix):]
+                    clean_model = clean_model[len(prefix) :]
                     break
 
             api_key = s.zhipu_api_key.get_secret_value() if s.zhipu_api_key else None
@@ -129,7 +133,7 @@ class LLMRouter:
         # ── Anthropic ─────────────────────────────────────────────────────
         elif _is_claude(model_name) and not _is_bedrock(model_name):
             model = ChatAnthropic(
-                model_name=model_name,
+                model=model_name,
                 temperature=temperature,
                 max_tokens=max_tok,
                 api_key=s.anthropic_api_key.get_secret_value() if s.anthropic_api_key else None,
@@ -139,11 +143,9 @@ class LLMRouter:
         # ── Google Gemini ──────────────────────────────────────────────────
         elif _is_gemini(model_name):
             try:
-                from langchain_google_genai import ChatGoogleGenerativeAI  # type: ignore[import]
+                from langchain_google_genai import ChatGoogleGenerativeAI
             except ImportError as exc:
-                raise ImportError(
-                    "Install langchain-google-genai: uv add langchain-google-genai"
-                ) from exc
+                raise ImportError("Install langchain-google-genai: uv add langchain-google-genai") from exc
             model = ChatGoogleGenerativeAI(
                 model=model_name,
                 temperature=temperature,
@@ -155,12 +157,10 @@ class LLMRouter:
         # ── Amazon Bedrock ────────────────────────────────────────────────
         elif _is_bedrock(model_name):
             try:
-                from langchain_aws import ChatBedrock  # type: ignore[import]
-                import boto3  # type: ignore[import]
+                import boto3
+                from langchain_aws import ChatBedrock
             except ImportError as exc:
-                raise ImportError(
-                    "Install langchain-aws and boto3: uv add langchain-aws boto3"
-                ) from exc
+                raise ImportError("Install langchain-aws and boto3: uv add langchain-aws boto3") from exc
             session_kwargs: dict[str, Any] = {"region_name": s.bedrock_aws_region}
             if s.bedrock_aws_access_key_id and s.bedrock_aws_secret_access_key:
                 session_kwargs["aws_access_key_id"] = s.bedrock_aws_access_key_id.get_secret_value()
@@ -170,16 +170,6 @@ class LLMRouter:
                 model_id=model_name,
                 client=boto_session.client("bedrock-runtime"),
                 model_kwargs={"temperature": temperature, "max_tokens": max_tok},
-            )
-            api_key = s.zhipu_api_key.get_secret_value() if s.zhipu_api_key else None
-            model = ChatOpenAI(
-                model_name=clean_model,
-                temperature=temperature,
-                max_tokens=max_tok,
-                api_key=api_key,
-                base_url=s.zhipu_base_url,
-                timeout=s.request_timeout,
-                max_retries=s.max_retries,
             )
         # ── OpenAI (default fallback) ─────────────────────────────────────
         else:
@@ -222,12 +212,12 @@ class LLMRouter:
         """Pick the configured default model for the active provider."""
         s = self.settings
         mapping = {
-            "openai":    s.openai_default_model,
+            "openai": s.openai_default_model,
             "anthropic": s.anthropic_default_model,
-            "google":    s.google_default_model,
-            "nvidia":    s.nvidia_default_model,
-            "bedrock":   s.bedrock_default_model,
-            "zhipu":     s.zhipu_default_model,
+            "google": s.google_default_model,
+            "nvidia": s.nvidia_default_model,
+            "bedrock": s.bedrock_default_model,
+            "zhipu": s.zhipu_default_model,
         }
         return mapping.get(s.default_provider, s.nvidia_default_model or "glm-4-flash")
 
@@ -266,17 +256,17 @@ class LLMRouter:
         # Build dynamic fallback candidates based on actually configured API keys
         s = self.settings
         candidate_list = [model_name]
-        
-        if s.nvidia_api_key and "CHANGE_ME" not in s.nvidia_api_key.get_secret_value():
-            candidate_list.append(s.nvidia_default_model)
-        if s.zhipu_api_key and "CHANGE_ME" not in s.zhipu_api_key.get_secret_value():
-            candidate_list.append(s.zhipu_default_model)
+
         if s.openai_api_key and "CHANGE_ME" not in s.openai_api_key.get_secret_value():
             candidate_list.append(s.openai_default_model)
         if s.anthropic_api_key and "CHANGE_ME" not in s.anthropic_api_key.get_secret_value():
             candidate_list.append(s.anthropic_default_model)
         if s.google_api_key and "CHANGE_ME" not in s.google_api_key.get_secret_value():
             candidate_list.append(s.google_default_model)
+        if s.nvidia_api_key and "CHANGE_ME" not in s.nvidia_api_key.get_secret_value():
+            candidate_list.append(s.nvidia_default_model)
+        if s.zhipu_api_key and "CHANGE_ME" not in s.zhipu_api_key.get_secret_value():
+            candidate_list.append(s.zhipu_default_model)
         # Remove duplicates while preserving order
         unique_models: list[str] = []
         for m in candidate_list:
@@ -325,8 +315,12 @@ class LLMRouter:
 
                 # Prometheus / OTel metrics
                 LLM_REQUESTS_TOTAL.labels(provider=active_provider, model=active_model, status="success").inc()
-                LLM_TOKENS_TOTAL.labels(provider=active_provider, model=active_model, token_type="prompt").inc(prompt_tokens)
-                LLM_TOKENS_TOTAL.labels(provider=active_provider, model=active_model, token_type="completion").inc(completion_tokens)
+                LLM_TOKENS_TOTAL.labels(provider=active_provider, model=active_model, token_type="prompt").inc(
+                    prompt_tokens
+                )
+                LLM_TOKENS_TOTAL.labels(provider=active_provider, model=active_model, token_type="completion").inc(
+                    completion_tokens
+                )
                 LLM_COST_USD_TOTAL.labels(provider=active_provider, model=active_model).inc(cost)
 
                 # Store in cache
@@ -338,7 +332,16 @@ class LLMRouter:
             except Exception as exc:
                 last_exception = exc
                 LLM_REQUESTS_TOTAL.labels(provider=active_provider, model=active_model, status="error").inc()
-                log.warning("LLM model call failed, trying fallback cascade", model=active_model, provider=active_provider, error=str(exc))
+                log.warning(
+                    "LLM model call failed, trying fallback cascade",
+                    model=active_model,
+                    provider=active_provider,
+                    error=str(exc),
+                )
 
-        log.error("All fallback models failed in LLM router cascade", models=unique_models, error=str(last_exception))
+        log.error(
+            "All fallback models failed in LLM router cascade",
+            models=unique_models,
+            error=str(last_exception),
+        )
         raise LLMError(service=f"LLM:{provider}", cause=last_exception) from last_exception
