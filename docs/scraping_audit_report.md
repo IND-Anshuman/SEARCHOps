@@ -1,446 +1,247 @@
 # SEARCHOps Web Scraping Audit Report
 
+> **Status: revised 2026-10-08.** This document previously described the scraping
+> layer as "functional but basic" with **42 missing components**. That was wrong.
+> The audit was written from the plan and research notes, not from the code, and
+> nearly every "missing" component it listed is in fact implemented.
+>
+> This revision states only what is in the tree. Performance claims are labelled
+> **MEASURED** (observed in a live run of this repo) or **NOT MEASURED**
+> (asserted by a docstring, comment, or vendor page and never verified here).
+
+---
+
 ## Executive Summary
 
-This comprehensive audit analyzes the current state of the SEARCHOps web scraping infrastructure against industry best practices and identifies critical gaps that prevent the platform from achieving production-grade, "god-level" web intelligence capabilities. Based on analysis of your existing codebase and the 2025-2026 research reports on AI-native web crawling, we've identified **42 critical missing components** across 8 architectural domains.
+The scraping layer is substantially more built out than the previous version of
+this report claimed. It is an **8-tier, cost-ordered escalation pipeline**
+(~6,400 LOC across 24 modules) with browser pooling, JA4 TLS impersonation,
+circuit breakers, a spend guard, per-domain rate limiting, LLM-assisted content
+pruning, and PDF/vision/table/schema extraction.
 
-The current implementation provides a functional but basic scraping pipeline. To achieve enterprise-grade capabilities, you need to implement: browser pooling, proxy rotation, advanced content extraction (LLM-assisted, tables, PDFs), anti-bot bypass, distributed task orchestration, and comprehensive deduplication. All recommendations prioritize **cost efficiency** (favoring open-source over managed services), **low overhead**, and **maximum impact**.
+**MEASURED** in a live research run (shallow depth, 2 sources): all 11 graph
+nodes completed, 18 sources retrieved, 4,065-character report produced, job
+status `completed`.
 
----
+The real problems are **wiring and operability**, not absence of features:
 
-## Part 1: Current State Analysis
-
-### What You Have (Verified from Codebase)
-
-| Component | Current Implementation | Assessment |
-|-----------|----------------------|------------|
-| **Firecrawl Scraper** | Basic API integration in `firecrawl.py` | ✅ Functional |
-| **Playwright Scraper** | Launches new browser per request - no pooling | ⚠️ Inefficient |
-| **Basic HTTP Fallback** | Simple httpx GET | ✅ Functional |
-| **Scraping Pipeline** | Sequential fallback (Firecrawl → Playwright → HTTP) | ⚠️ Basic |
-| **Transport Pool** | Shared httpx.AsyncClient | ⚠️ Basic |
-| **Content Cache** | Redis + SHA256 hashing | ✅ Good |
-| **Search Orchestrator** | Caching, circuit breakers, health monitoring | ✅ Advanced |
-| **MCP Client** | Abstract skeleton only | ⚠️ Stub |
-
-### What You're Missing
-
-Your codebase has **strong foundations** in search orchestration, caching, and observability, but the **scraping layer itself is underdeveloped** compared to the SOTA architecture described in the research reports.
-
----
-
-## Part 2: Gap Analysis by Domain
-
-### 2.1 Browser Automation (Critical Gap)
-
-**Current State:**
-- Playwright launches a **new browser instance per request** (300ms-1200ms cold start)
-- No browser context pooling
-- No shared memory (`/dev/shm`) configuration
-- No stealth/anti-fingerprinting measures
-- No network interception (XHR, Fetch, GraphQL)
-- No session persistence
-
-**Research Report Findings:**
-```
-Automation Execution Model    | Startup Latency | DRAM Footprint | Scalability
-New Native Browser Instance   | 300-1200ms      | 150-300MB      | 2-4 concurrent
-Isolated BrowserContext       | 10-50ms         | 15-35MB        | 20-40 concurrent
-```
-
-**Required Implementations:**
-
-| Priority | Component | Impact | Effort | Cost |
-|----------|-----------|--------|--------|------|
-| 🔴 HIGH | Browser Pool Manager | Reduce latency 10-20x | Medium | $ Free |
-| 🔴 HIGH | Pre-warmed Chromium Instances | Eliminate cold start | Low | $ Free |
-| 🔴 HIGH | Network Interception (XHR/Fetch/GraphQL) | Extract data before DOM | Medium | $ Free |
-| 🟡 MED | Session Persistence | Reuse authenticated sessions | Medium | $ Free |
-| 🟡 MED | Anti-fingerprinting Config | Bypass basic detection | Low | $ Free |
-| 🟢 LOW | Stealth Browser (Steel Browser) | Bypass advanced detection | High | $$ |
-
-### 2.2 Content Extraction Pipeline (Critical Gap)
-
-**Current State:**
-- Returns raw HTML from Playwright
-- Returns Firecrawl's Markdown (good)
-- No table extraction
-- No PDF extraction
-- No image/vision extraction
-- No content pruning/cleaning for LLM context
-
-**Research Report Findings:**
-> Raw HTML documents contain 80-95% non-informative structural overhead. Modern AI crawlers employ heuristic pruning algorithms to strip structural noise while preserving semantic content.
-
-**Required Implementations:**
-
-| Priority | Component | Impact | Effort | Cost |
-|----------|-----------|--------|--------|------|
-| 🔴 HIGH | HTML-to-Markdown Pruning | 67% token reduction | Medium | $ Free |
-| 🔴 HIGH | Table Extraction | Structured data from grids | Medium | $ Free |
-| 🟡 MED | PDF Extraction (Marker/Docling) | Parse PDF documents | Medium | $$ |
-| 🟡 MED | Metadata Extraction (JSON-LD, OpenGraph) | Structured data | Low | $ Free |
-| 🟢 LOW | Vision-Language Extraction | Canvas/Image parsing | High | $$$ |
-
-**Tool Selection (Cost-Optimized):**
-
-| Function | Recommended Tool | Rationale |
-|----------|-----------------|-----------|
-| HTML→Markdown | Crawl4AI (local) | Free, 6x faster, BM25 pruning |
-| Table Extraction | Crawl4AI built-in | Included with crawl4ai |
-| PDF Parsing | PyMuPDF (simple) + Marker (complex) | PyMuPDF free, Marker GPU required |
-| Schema Extraction | Selectolax | Fast C-based HTML parsing |
-
-### 2.3 Proxy & Anti-Bot Infrastructure (Critical Gap)
-
-**Current State:**
-- No proxy rotation
-- No IP management
-- No anti-bot bypass
-- Fixed User-Agent string
-
-**Research Report Findings:**
-```
-Anti-Bot Bypass Benchmark:
-- ZenRows Stack: 99.85% success, $3.34/1k reqs
-- Scrape.do: 92.64% success, $2.50/1k reqs  
-- Firecrawl Managed: 85.28% (2 QPS), $5.14/1k reqs
-- Raw Playwright (Self-Host): 33.69% success
-```
-
-**Required Implementations:**
-
-| Priority | Component | Impact | Effort | Cost |
-|----------|-----------|--------|--------|------|
-| 🔴 HIGH | Proxy Gateway Layer | Rotate IPs on 403/429 | Medium | $$ |
-| 🔴 HIGH | Adaptive Rate Limiting | Dynamic backoff by response | Low | $ Free |
-| 🟡 MED | TLS Fingerprint Customization | JA4 signature forging | High | $ Free |
-| 🟢 LOW | CAPTCHA Handling | Route to resolution service | High | $$$ |
-
-**Tool Selection (Cost-Optimized):**
-
-| Function | Recommended Tool | Cost |
-|----------|-----------------|------|
-| Residential Proxies | DataImpulse ($1/GB) or Decodo ($2-2.50/GB) | $ |
-| Anti-bot Bypass (Tier 1) | Crawl4AI + custom headers | $ Free |
-| Anti-bot Bypass (Tier 2) | ZenRows API for protected sites | $$ |
-
-### 2.4 Task Orchestration (Moderate Gap)
-
-**Current State:**
-- Basic sequential fallback in pipeline
-- No distributed task queue (Kafka/Redis Streams)
-- No URL deduplication at scale
-- No domain-level rate limiting
-
-**Research Report Findings:**
-> Partitioning distributed streaming queues by target domain hash guarantees strict per-host politeness ordering. Long-tail distribution of website sizes causes partition skew.
-
-**Required Implementations:**
-
-| Priority | Component | Impact | Effort | Cost |
-|----------|-----------|--------|--------|------|
-| 🔴 HIGH | Domain-Based Priority Queue | Prevent DoS on targets | Medium | $ Free |
-| 🔴 HIGH | URL Deduplication (Bloom Filter) | Prevent re-crawling | Low | $ Free |
-| 🟡 MED | Distributed Lock Coordination | Multi-worker sync | Medium | $ Free |
-| 🟢 LOW | Apache Kafka Integration | High-throughput queue | High | $ |
-
-### 2.5 Data Quality & Deduplication (Moderate Gap)
-
-**Current State:**
-- Basic URL-based caching (SHA256)
-- No near-duplicate detection
-- No content quality filtering
-- No "AI slop" detection
-
-**Research Report Findings:**
-> Up to 30% of global web pages contain duplicate or near-duplicate content. Deduplication requires two-tier approach: exact hash matching + Locality-Sensitive Hashing (LSH).
-
-**Required Implementations:**
-
-| Priority | Component | Impact | Effort | Cost |
-|----------|-----------|--------|--------|------|
-| 🔴 HIGH | Near-Deduplication (MinHash/LSH) | Drop 30% duplicates | Medium | $ Free |
-| 🟡 MED | Content Quality Classifier | Filter AI-generated spam | Medium | $$ |
-| 🟡 MED | Perplexity Scoring | Detect low-quality content | Medium | $ Free |
-
-### 2.6 LLM-Assisted Extraction (Future Enhancement)
-
-**Current State:**
-- No LLM-based extraction
-- No Pydantic schema enforcement
-- No self-correction loops
-
-**Research Report Findings:**
-> Schema enforcement at token level (using Outlines/XGrammar) guarantees 100% JSON validity. Multi-agent reflection corrects failed extraction attempts.
-
-**Tool Selection (Cost-Optimized):**
-
-| Function | Recommended Tool | Cost |
-|----------|-----------------|------|
-| Schema Enforcement | Outlines or function calling | $ Free |
-| Extraction LLM | Gemini 2.0 Flash (fast) or GPT-4o (accurate) | $$ |
-| Local Extraction | vLLM + Llama-3 (self-hosted) | $$$ |
-
-**Note:** This is lower priority for now - implement infrastructure first.
+1. `MinHashDeduplicator` was fully implemented but never imported by the
+   pipeline — dead code. **Fixed 2026-10-09**: a persistent (Redis-backed)
+   variant now exists and passes recall/precision assertions; it is not yet the
+   pipeline default (see G1).
+2. `NetworkInterceptor` captured no JSON bodies at all until 2026-10-08; it
+   detected `application/json` and then executed `pass`. **Fixed.**
+3. Extraction nodes silently returned `[]` on malformed LLM output until
+   2026-10-09, discarding whole documents with no record. **Fixed** by the
+   repair ladder; a live `recovery_rate` figure is still **NOT MEASURED**.
+4. Several latency claims in code comments are **NOT MEASURED**.
+5. Search-provider credentials are a runtime dependency: with no valid
+   `brightdata_serp` zone and no reachable `searxng`, the pipeline silently
+   degrades to the Playwright/DuckDuckGo fallback. **MEASURED** — this exact
+   degradation happened in the live run above. Still open (G4).
 
 ---
 
-## Part 3: Bottleneck Mitigation Matrix
+## Part 1: Current State (verified from the tree)
 
-Based on Report 2's engineering bottleneck analysis, here are the critical mitigations for your current architecture:
+### 1.1 The tier chain
 
-| Bottleneck | Severity | Mitigation | Priority |
-|------------|----------|------------|----------|
-| **Browser cold start** | 🔴 HIGH | Implement browser pool with pre-warmed instances | P0 |
-| **No network interception** | 🔴 HIGH | Add CDP network monitoring for XHR/GraphQL | P0 |
-| **Raw HTML token bloat** | 🔴 HIGH | Add HTML→Markdown pruning pipeline | P0 |
-| **No proxy rotation** | 🔴 HIGH | Add proxy gateway with IP rotation | P0 |
-| **Fixed User-Agent** | 🟡 MED | Implement User-Agent rotation | P1 |
-| **No session persistence** | 🟡 MED | Add browser profile serialization | P1 |
-| **No near-deduplication** | 🟡 MED | Implement MinHash LSH | P1 |
-| **Single browser per request** | 🔴 HIGH | Implement context pooling | P0 |
-| **No rate limiting per domain** | 🟡 MED | Add domain-level token bucket | P1 |
+Declared in `src/searchops/scraping/tier.py:191` (`TIER_DEFINITIONS`), ordered
+cheapest/lightest → most expensive:
 
----
+| Prio | Tier | Cost/page | Timeout | Gate | Notes |
+|-----:|------|----------:|--------:|------|-------|
+| 0 | `stealth_http` | $0 | 15s | always on | curl_cffi JA4 impersonation |
+| 1 | `proxy_router` | $0 | 20s | if a proxy is configured | |
+| 2 | `crawl4ai` | $0 | 30s | `crawl4ai_enabled` | |
+| 3 | `playwright` | $0 | 30s | `playwright_enabled` | pooled browser |
+| 4 | `bd_unlocker` | ~$0.001 | 30s | `brightdata_unlocker_enabled` | residential proxy |
+| 5 | `firecrawl` | $0 | 60s | `firecrawl_enabled` | |
+| 6 | `bd_browser` | ~$0.01 | 60s | `brightdata_browser_enabled` | **premium** — fires only on `FailureClass.ACCESS`, not 404 |
+| 7 | `basic_http` | $0 | — | always on | last resort |
 
-## Part 4: Recommended Implementation Roadmap
+The premium tier's access-only trigger is the single most valuable piece of cost
+control in the system: it stops a 404 from escalating into a paid Cloud Browser
+session.
 
-### Phase 1: Foundation (Weeks 1-2) — HIGH IMPACT / LOW EFFORT
+### 1.2 Component inventory
 
-These changes provide the biggest improvement with minimal effort:
+| Component | File | State |
+|---|---|---|
+| Cost-ordered tier pipeline | `pipeline.py` | ✅ implemented, 8 tiers |
+| Stealth HTTP (JA4) | `stealth.py` | ✅ curl_cffi, Chrome TLS + header impersonation |
+| Browser pool | `browser_pool.py` | ✅ pre-warmed contexts, health-checked, recycles at N requests |
+| Bright Data CDP pool | `bd_browser_pool.py` | ✅ bounded semaphore, per-tier recycle, health probe |
+| Network interception | `pipeline.py` (`NetworkInterceptor`) | ✅ JSON/GraphQL capture (**fixed 2026-10-08**), capped at 20 bodies |
+| Per-tier circuit breakers | `bd_circuit_breaker.py` | ✅ async CLOSED/OPEN/HALF_OPEN, 100% covered |
+| Spend guard | `bd_spend_guard.py` | ✅ present |
+| Per-domain rate limiter | `rate_limiter.py` | ✅ present |
+| Content pruning → Markdown | `content_pruner.py` | ✅ selectolax renderer (**fixed 2026-10-08**) |
+| Near-dedup (MinHash+LSH) | `deduplicator.py` | ⚠️ implemented, **NOT WIRED** |
+| Content-hash cache | `cache.py` | ✅ Redis + SHA256/ETag |
+| PDF extraction | `document_engine.py` | ✅ PyMuPDF + Docling |
+| Vision extraction | `vision_extractor.py` | ✅ present |
+| Table/schema extraction | `schema_extractor.py` | ✅ present |
+| Crawl4AI engine | `crawl4ai_engine.py` | ✅ present |
+| Firecrawl | `firecrawl.py` | ✅ present |
+| Dead-letter queue | `dlq.py` | ✅ present |
 
-```
-□ 1.1 Browser Pool Manager
-   - Implement reusable Playwright browser contexts
-   - Target: 10-50 concurrent contexts per browser instance
-   - Impact: Reduce latency from 1200ms to ~50ms
+### 1.3 What the previous report got wrong
 
-□ 1.2 Pre-warmed Browser Instances  
-   - Keep browsers alive in background
-   - Target: <50ms latency per request
-   - Impact: 20-40x throughput improvement
-
-□ 1.3 HTML-to-Markdown Pruning
-   - Integrate Crawl4AI or custom pruning
-   - Target: 67% token reduction
-   - Impact: Major LLM cost savings
-
-□ 1.4 Adaptive Rate Limiting
-   - Implement sliding window per domain
-   - Dynamic backoff on 429 responses
-   - Impact: Prevent IP bans
-```
-
-**Estimated Cost:** $0 (all open-source)
-**Expected Impact:** 10-20x performance improvement
-
-### Phase 2: Resilience (Weeks 3-4) — HIGH IMPACT / MEDIUM EFFORT
-
-```
-□ 2.1 Proxy Gateway Layer
-   - Integrate DataImpulse or Decodo
-   - Automatic rotation on 403/429
-   - Impact: Bypass basic anti-bot
-
-□ 2.2 Network Interception
-   - CDP Network monitoring
-   - Extract XHR/Fetch/GraphQL before DOM
-   - Impact: Extract data from dynamic SPAs
-
-□ 2.3 Session Persistence
-   - Serialize cookies/localStorage
-   - Resume authenticated sessions
-   - Impact: Skip re-login for gated content
-
-□ 2.4 URL Deduplication
-   - Bloom filter for exact dedup
-   - LSH for near-duplicate detection
-   - Impact: 30% reduction in crawl volume
-```
-
-**Estimated Cost:** $50-200/month (proxy bandwidth)
-**Expected Impact:** 50%+ reduction in blocked requests
-
-### Phase 3: Advanced Extraction (Weeks 5-8) — MEDIUM IMPACT / MEDIUM EFFORT
-
-```
-□ 3.1 Table Extraction
-   - Integrate Crawl4AI table extraction
-   - Export to Pandas DataFrame / DuckDB
-   - Impact: Structured data from dynamic tables
-
-□ 3.2 Metadata Extraction
-   - Parse JSON-LD, OpenGraph, Microdata
-   - Schema.org entity extraction
-   - Impact: Structured data without LLM
-
-□ 3.3 PDF Integration
-   - PyMuPDF for simple PDFs
-   - Marker for complex/layout PDFs
-   - Impact: Full document ingestion
-
-□ 3.4 Content Quality Filter
-   - Perplexity scoring
-   - AI slop detection
-   - Impact: Cleaner vector index
-```
-
-**Estimated Cost:** $0-100/month (PDF GPU if needed)
-**Expected Impact:** Structured data from all sources
-
-### Phase 4: Enterprise Features (Weeks 9-12) — FUTURE
-
-```
-□ 4.1 Distributed Task Queue (Kafka)
-□ 4.2 MCP Server Integration
-□ 4.3 Vision-Language Extraction
-□ 4.4 Advanced Anti-Bot Bypass (ZenRows)
-```
+| Previous claim | Reality |
+|---|---|
+| "Playwright launches a new browser per request — no pooling" | ❌ False. `browser_pool.py` pre-warms and reuses contexts. |
+| "No network interception (XHR, Fetch, GraphQL)" | ⚠️ It existed but captured nothing (`pass`). Now functional. |
+| "No browser context pooling" | ❌ False. `BrowserPool` + `BDCDPPool`. |
+| "No content pruning/cleaning for LLM context" | ❌ False. `content_pruner.py`, 81% covered. |
+| "No comprehensive deduplication" | ⚠️ Implemented (`deduplicator.py`) but never wired in. |
+| "No stealth/anti-fingerprinting" | ❌ False. `stealth.py` impersonates Chrome JA4 + headers. |
+| "42 critical missing components" | ❌ Not supported by the tree. |
 
 ---
 
-## Part 5: Tool Selection Matrix (Cost-Optimized)
+## Part 2: Real gaps
 
-Based on your requirements (cost, time, space efficiency):
+### G1 — Near-deduplication was dead code (HIGH) — **FIXED 2026-10-09**
 
-### Primary Stack
+`MinHashDeduplicator` (`deduplicator.py`) implemented 128-permutation MinHash
+signatures with LSH at a 0.85 Jaccard threshold and had unit tests, but was
+**never imported by `pipeline.py` or any other module** (verified by grep), and
+was in-memory only, so every process restart lost the index.
 
-| Component | Recommended | Alternative | Cost |
-|-----------|-------------|-------------|------|
-| **Browser Automation** | Playwright (existing) + Pool Manager | Crawl4AI | Free |
-| **HTML→Markdown** | Crawl4AI (PruningContentFilter) | Trafilatura | Free |
-| **HTML Parsing** | Selectolax | lxml | Free |
-| **Proxy** | DataImpulse ($1/GB) | Decodo ($2.50/GB) | $ |
-| **Caching** | Redis (existing) | - | Free |
-| **Task Queue** | Redis Streams | Kafka | Free/$ |
+**Original impact:** a long crawl re-processed near-duplicate pages, paying for
+extraction and LLM calls on content already seen.
 
-### Extractions Tools
+**What was done:**
+- Added `PersistentMinHashDeduplicator` + `build_persistent_deduplicator` with
+  a datasketch `storage_config` so the LSH bands live in Redis and survive
+  restarts. A `storage=` injection point exists so tests never open a live
+  connection.
+- Detection semantics are unchanged from the in-memory class; only the backend
+  differs. Tests route datasketch's storage factory at a shared backend to
+  reproduce a restart.
+- Measured on a mixed corpus of 10 distinct docs + 5 near-duplicate variants +
+  5 unrelated docs: **recall ≥ 0.85 and precision ≥ 0.95 asserted and passing**
+  (18 tests).
 
-| Component | Recommended | When to Use |
-|-----------|-------------|-------------|
-| **Tables** | Crawl4AI built-in | Most cases |
-| **PDF (simple)** | PyMuPDF | Digital PDFs |
-| **PDF (complex)** | Marker | Scanned/multi-column |
-| **Metadata** | Selectolax + custom | JSON-LD, OpenGraph |
+**Remaining:** the persistent variant is tested and importable but is **not yet
+the default** — `pipeline.py` does not construct one. Wiring it as the default
+(and selecting a Redis-backed storage config at startup) is still open.
 
-### LLM Integration (Future)
+### G2 — No URL frontier seen-set (MEDIUM) — **FIXED 2026-10-09**
 
-| Component | Recommended | Rationale |
-|-----------|-------------|-----------|
-| **Fast extraction** | Gemini 2.0 Flash | $0.60/1M input tokens |
-| **Accurate extraction** | GPT-4o | Better schema adherence |
-| **Self-hosted** | vLLM + Llama-3 | Full control, high volume |
+There was no URL frontier set. Dedup was content-based only, so the same URL
+was still fetched and hashed before its content could be compared — a failed or
+uncached URL was re-fetched and re-paid-for on every retry.
 
----
+**What was done:** `url_seen.py` provides `URLSeenSet` with:
+- Per-URL `SETNX` keys for **exact** de-duplication (zero false positives).
+- Bloom-sizing helpers (`optimal_bit_array_size`, `optimal_hash_count`) for
+  deployments that do have RedisBloom — ~114 MB at 100M URLs, 1% FP.
+- URL normalization (lowercase, strip default ports, drop fragments) so trivial
+  variants collapse to one entry.
+- `force=True` to persist a frontier entry on the success path.
+- Graceful degradation: an unreachable Redis fails open (URLs treated as
+  unseen) with a `degraded_calls` counter, so the crawl is never blocked.
 
-## Part 6: Implementation Reference
+**Wired into `pipeline.py`** as step 0b, ahead of every network tier: a
+repeat URL returns HTTP 208 with `skipped=already_seen` and the current
+`seen_skip_rate` in metadata.
 
-### Browser Pool Architecture
+**Why SETNX, not a Bloom filter:** this server's Redis returns
+`unknown command` for `BF.ADD` — RedisBloom is not installed. Per-URL SETNX
+keys give exact (never false-positive) behaviour; the Bloom helpers are kept
+for deployments that have the module.
 
-```python
-# Target: 20-40 concurrent contexts per browser
-class BrowserPool:
-    def __init__(self, pool_size: int = 5):
-        self.pool_size = pool_size
-        self.browsers: List[Browser] = []
-        self.contexts: asyncio.Queue = asyncio.Queue()
-    
-    async def acquire(self) -> BrowserContext:
-        # Reuse or create context
-        if not self.contexts.empty():
-            return await self.contexts.get()
-        
-        # Launch new context from pre-warmed browser
-        browser = await self._get_browser()
-        return await browser.new_context()
-    
-    async def release(self, context: BrowserContext):
-        await self.contexts.put(context)
-```
+**NOT MEASURED:** real `seen_skip_rate` on a live crawl. The counter is emitted
+in every skip response, so it is directly observable once a crawl runs.
 
-### Proxy Rotation Pattern
+### G3 — Latency claims are unverified (MEDIUM)
 
-```python
-class ProxyGateway:
-    def __init__(self, providers: List[ProxyProvider]):
-        self.providers = providers
-        self.current_provider = None
-    
-    async def request(self, url: str, headers: dict):
-        for provider in self.providers:
-            proxy = await provider.get_proxy()
-            try:
-                return await self._fetch(url, proxy, headers)
-            except (403, 429) as e:
-                await provider.rotate()
-                continue
-        raise AllProxiesExhausted()
-```
+Comments claim pool warm-up takes cold start "300-1200ms → <50ms". Nothing in
+the repo measures this.
 
-### Content Pruning Pipeline
+**MEASURED** in the live run: `report_writer` 34,505ms, `state_pruner`
+29,198ms, `search` 24,644ms — but these are cumulative across loop iterations,
+not per-node figures, so they cannot be compared to the claimed cold-start
+numbers.
 
-```python
-# 67% token reduction with semantic preservation
-class ContentPruner:
-    def prune(self, html: str) -> str:
-        # 1. Strip scripts, styles, nav, footer
-        # 2. Extract main content via readability
-        # 3. Convert to clean Markdown
-        # 4. Apply BM25 relevance filtering
-        return markdown_content
-```
+**Fix:** add a benchmark that measures warm vs. cold acquisition and publish
+real numbers, or delete the claims.
 
----
+### G4 — Search credentials are a silent single point of failure (HIGH)
 
-## Part 7: Quick Wins Checklist
+In the live run, `brightdata_serp` returned `422 Unknown zone` and `searxng`
+could not connect. The cascade still produced a report via the
+Playwright/DuckDuckGo fallback, but the operator had no signal that the
+configured provider was broken — only a healthy-looking completed job.
 
-Start here for immediate impact:
+**Fix:** surface per-provider health in the job payload; fail loudly when a
+configured provider is misconfigured rather than degrading silently.
 
-- [ ] **Browser Pooling** - Reuse browser contexts (10-20x faster)
-- [ ] **Pre-warmed Browsers** - Keep browsers alive (eliminates 300-1200ms cold start)
-- [ ] **HTML→Markdown** - Use Crawl4AI pruning (67% less tokens)
-- [ ] **Adaptive Rate Limiting** - Sliding window per domain (prevents bans)
-- [ ] **Network Interception** - Extract XHR/GraphQL (works on SPAs)
-- [ ] **User-Agent Rotation** - Rotate common UAs (basic evasion)
-- [ ] **Near-Deduplication** - MinHash LSH (30% fewer pages)
+### G5 — `extract_knowledge` produced 0 entities (MEDIUM) — **partially addressed**
 
----
+The node is correctly wired and executes, but the live run reported
+`entities: 0` because upstream scraping returned no usable content for that
+query. The wiring is proven; end-to-end entity yield is **NOT MEASURED** on a
+query with healthy upstream providers.
 
-## Part 8: Cost Projections
+**What was done (2026-10-09):** the self-healing extraction loop
+(`llm/json_repair.py` + `llm/repair_memory.py`) removes one remaining way this
+gap could hide a real failure. Both extraction nodes used to `except: return []`
+on malformed LLM output, so a single bad character silently discarded a whole
+document with no record. Outcomes are now counted and tier-tagged, and partial
+evidence is salvaged rather than dropped.
 
-### Small Scale (10,000 pages/day)
+Two related bugs were fixed as a direct result:
+- **Relations with undeclared endpoints were silently dropped.** `KGRelation`
+  required both `source` and `target` to exist in the entity map; the model
+  routinely names an endpoint it never declares (`USES: Python -> CPython` with
+  only `Python` in `entities`). A marked placeholder entity is now created so
+  the relation survives.
+- **`"citations": null` destroyed a whole document.** The schema is now
+  null-tolerant; a citation-less claim is still evidence.
 
-| Resource | Configuration | Monthly Cost |
-|----------|---------------|--------------|
-| Crawler Compute | 2x c6i.xlarge | $245 |
-| Proxy Bandwidth | ~20 GB/month | $20-40 |
-| Vector DB | Existing Qdrant | $0 |
-| **Total** | | **$265-285/month** |
-
-### Medium Scale (100,000 pages/day)
-
-| Resource | Configuration | Monthly Cost |
-|----------|---------------|--------------|
-| Crawler Compute | 10x c6i.xlarge | $1,200 |
-| Proxy Bandwidth | ~200 GB/month | $200-400 |
-| GPU (LLM) | Shared L40S | $500 |
-| **Total** | | **$1,900-2,100/month** |
+**Still NOT MEASURED:** a live run with working search credentials. The
+`recovery_rate` / `unrecovered` counters in `RepairMemory.snapshot()` will give
+a real figure once one is run.
 
 ---
 
-## Summary
+## Part 3: Fixes applied in this revision cycle
 
-Your SEARCHOps project has **strong foundations** in search orchestration, caching, and observability. The scraping layer needs significant enhancement to reach production-grade capability. Focus on:
+| Date | Fix | Evidence |
+|---|---|---|
+| 2026-10-09 | **Self-healing extraction loop.** `extract_claims.py` and `extractor.py` both silently returned `[]` on malformed LLM JSON. Added a 5-tier deterministic repair ladder (`json_repair.py`: exact → fence_strip → balanced_slice → structural_repair → span_salvage) that recovers truncated tails, prose wrappers, trailing commas, smart quotes and Python literals with no extra LLM calls. | 44 tests |
+| 2026-10-09 | **Per-domain repair memory** (`repair_memory.py`): bounded LRU (10K domains, verified with a 5000-host simulation), thread-safe under 8 concurrent writers, emitting `recovery_rate` / `avg_tiers_tried` / `unrecovered`. | 24 tests |
+| 2026-10-09 | **Silent relation loss:** a relation naming an undeclared entity endpoint was dropped entirely. Now materializes a marked placeholder (`entity_type="Concept"`, `description=""`). | 4 regression tests |
+| 2026-10-09 | **`"citations": null`** rejected the whole claim payload. Schema is null-tolerant; citation-less claims are kept. | included above |
+| 2026-10-09 | **URL frontier seen-set** (`url_seen.py`) wired into `pipeline.py` ahead of all tiers; per-URL `SETNX` exact dedup, URL normalization, fail-open on Redis loss. | 22 tests |
+| 2026-10-09 | **Persistent MinHash dedup** (`PersistentMinHashDeduplicator`) — index survives restart via datasketch Redis storage. | 18 tests |
+| 2026-10-09 | **Learned per-domain tier routing** (`tier_bandit.py`): epsilon-greedy UCB1 replaces the static tier sort, scoring `p_success / (1 + avg_cost × 1000)` + exploration bonus. Never drops a tier, degrades to static priority on error. Exposes `saved_cost_usd` / `bandit_reorders`. | 17 tests |
+| 2026-10-08 | `content_pruner.py` Markdown renderer was dead — `n.children` does not exist on selectolax nodes (API is `.iter()`), so the pruner threw on nearly every page and silently fell back to tag-stripping, losing tables, links, headings, code fences and blockquotes. | 43% → 81% coverage; 36 tests |
+| 2026-10-08 | `browser_pool.py` `new_page()` never reused a page: `if self._page is None or not self._page.is_closed():` recreated on every call. | 30% → 80% coverage; 38 tests |
+| 2026-10-08 | `bd_browser_pool.py` `shutdown()` raised `AttributeError` on a never-initialized pool — `_maintenance_task` was assigned but never declared in `__init__`. | 17% → 86% coverage; 40 tests |
+| 2026-10-08 | `NetworkInterceptor._on_response` detected JSON then executed `pass`; `json_responses` did not exist. `get_structured_data()` filtered on a `headers` key that was never stored, so it always returned empty. | 15 new tests |
+| 2026-10-08 | Topology drift: the API node map used ids the graph no longer registered, so 4 of 8 nodes were silently dropped from every job payload. Live job went `failed` → `completed`. | 7 contract tests + build-time guard |
 
-1. **Browser pooling** (biggest impact, lowest effort)
-2. **Content pruning** (major cost savings on LLM tokens)
-3. **Proxy rotation** (prevents getting blocked)
-4. **Network interception** (handles modern SPAs)
-5. **Deduplication** (reduces total crawl volume)
-
-The good news: **80% of the improvement comes from Phase 1 changes** that are free to implement. You don't need to spend much to go from basic to "god-level" - you need architectural improvements, not expensive tools.
+**Quality gate state after all of the above: 798 tests passing, 76.79% coverage
+(gate 75%), mypy clean across 210 files, ruff clean.**
 
 ---
 
-*Report generated based on analysis of SEARCHOps codebase and 2025-2026 AI-Native Web Crawling research reports.*
+## Part 4: Recommended next steps (priority order)
+
+1. **Make `PersistentMinHashDeduplicator` the default** in the pipeline and
+   select a Redis-backed storage config at startup (G1 remainder). It is tested
+   but not yet constructed anywhere.
+2. **Surface per-provider health** in the job payload so a misconfigured
+   credential is visible instead of silently degrading (G4).
+3. **Benchmark warm vs. cold browser acquisition** and replace or delete the
+   unverified latency claims (G3).
+4. **Re-run against working credentials** to measure real entity yield and real
+   `recovery_rate` / `seen_skip_rate` — the counters now exist, the numbers do
+   not (G5).
+5. **Benchmark the tier bandit** against the static order on a real crawl to
+   produce an actual "% cost saved" figure. The mechanism is tested; the saving
+   is estimated, not measured.

@@ -219,11 +219,39 @@ c:/Users/HP/Desktop/SEARCHOps/
 │   │   ├── domain/                    # BaseEntity, BaseValueObject, AggregateRoot
 │   │   └── contracts/                 # API Standard Envelope Responses
 │   └── typing/                        # Shared Type Aliases & Validators
-├── tests/                             # Test Suite (134 PASSED tests, 100% pass rate)
+├── tests/                             # Test Suite (651 tests, 75.46% coverage)
 └── docs/                              # Architecture & Operations Reference Manuals
 ```
 
+> **Module counts (verified 2026-10-08):** 206 source modules under `src/`,
+> 24 modules under `scraping/` alone (~6,400 LOC). The `scraping/` section above
+> is illustrative, not exhaustive — see §3.1 for the full tier inventory.
+
 ---
+
+## 3.1 Performance Claims — Measurement Status
+
+Every performance number in this repository and its sibling documents is
+classified below. **MEASURED** means observed in an instrumented run of this
+codebase; **NOT MEASURED** means it originates from a comment, docstring, or
+vendor page and has never been verified here.
+
+| Claim | Source | Status | Actual evidence |
+|-------|--------|--------|-----------------|
+| Browser pool eliminates 300–1200ms cold start, "<50ms" warm | code comments in `scraping/browser_pool.py` | **NOT MEASURED** | No benchmark exists. See G3 in `scraping_audit_report.md`. |
+| 10–20x latency reduction from context pooling | code comments | **NOT MEASURED** | Same — no benchmark. |
+| "67% token reduction" from HTML→Markdown pruning | comments in `content_pruner.py` | **NOT MEASURED** | `get_stats()` computes a real ratio at runtime, but no aggregate figure has been published. |
+| MinHash+LSH drops ~30% duplicate pages | research literature cited in `deduplicator.py` | **NOT MEASURED** | Deduplicator is implemented but not wired into the pipeline (G1). |
+| Premium tier fires only on ACCESS failures, not 404 | `scraping/tier.py` `trigger_on` | **MEASURED (structurally)** | Verified in the tier table: `bd_browser` declares `trigger_on=frozenset({FailureClass.ACCESS})`. |
+| All 11 graph nodes report latency | live API run | **MEASURED** | A shallow research job reported every node `completed` with a latency value. |
+| Live job completes end-to-end | live API run | **MEASURED** | `status: completed`, progress 100%, 18 sources, 4,065-char report. |
+| Per-node latencies (report_writer 34,505ms etc.) | live API run | **MEASURED but not per-node** | These are cumulative across reflection-loop iterations; they are not comparable to the cold-start claims above. |
+
+### Consequence
+
+The cold-start and token-reduction numbers should not be quoted externally.
+Either add a benchmark that measures warm vs. cold browser acquisition, or
+delete the claims from the code comments.
 
 ## 4. Domain Model & Entities
 
