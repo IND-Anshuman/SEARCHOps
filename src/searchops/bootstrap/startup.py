@@ -78,6 +78,19 @@ async def startup() -> ApplicationContainer:
     container = ApplicationContainer.create()
     _set_container(container)
 
+    # Step 5: Register the MCP tools with their real handlers, so the tool
+    # registry is not a catalogue of things that cannot be executed. Each tool
+    # is bound to the function that actually performs the work.
+    try:
+        from searchops.mcp.brightdata_mcp_tools import register_brightdata_tools
+
+        count = await register_brightdata_tools(container.tool_registry)
+        log.info("MCP tools registered", count=count)
+    except Exception as exc:
+        # A missing optional tool set must not stop the platform from
+        # starting, but it must be visible in the log.
+        log.warning("MCP tool registration failed", error=str(exc))
+
     elapsed = time.monotonic() - _startup_time
     log.info(
         "SEARCHOps platform started",

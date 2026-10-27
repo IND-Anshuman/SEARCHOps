@@ -192,16 +192,25 @@ class ReportDocument:
         )
 
     def to_dict(self) -> dict[str, Any]:
-        """Plain-data projection for orjson serialisation in JobStateManager."""
+        """Plain-data projection for orjson serialisation in JobStateManager.
+
+        Claims and gaps are pydantic models that orjson cannot serialise as-is;
+        emit them as plain dicts so the terminal persisted state round-trips
+        through Redis. Without this, the gap and claim lists that the derived
+        endpoints and the trust/glossary surfaces read from the stored job come
+        back empty (orjson raises and the state is never committed), which is how
+        "Where to go next" silently reports zero gaps even after the critic
+        emitted them.
+        """
         return {
             "job_id": self.job_id,
             "query": self.query,
             "blocks": [b.to_dict() for b in self.blocks],
             "quality": self.quality,
             "user_message": self.user_message,
-            "claims": list(self.claims),
-            "entities": list(self.entities),
-            "gaps": list(self.gaps),
+            "claims": [_as_dict(c) for c in self.claims],
+            "entities": [_as_dict(e) for e in self.entities],
+            "gaps": [_as_dict(g) for g in self.gaps],
         }
 
     # ── Projection ───────────────────────────────────────────────────────────
@@ -221,6 +230,15 @@ class ReportDocument:
 
     def visible_blocks(self) -> list[ReportBlock]:
         return [b for b in self.blocks if not b.hidden]
+
+    def report_title(self) -> str:
+        """The report's own title (its leading H1), falling back to the query."""
+        first = next((b for b in self.blocks if b.kind is BlockKind.HEADING), None)
+        if first is not None and first.level == 1:
+            title = first.text.lstrip("#").strip()
+            if title and title.lower() != "research report":
+                return title
+        return self.query.strip() or "Research Report"
 
     # ── Operations ───────────────────────────────────────────────────────────
 
@@ -417,6 +435,72 @@ def _slug(text: str) -> str:
     return re.sub(r"[^a-z0-9]+", "-", text.lower()).strip("-")
 
 
+def _as_dict(obj: Any) -> dict[str, Any]:
+    """Serialise a pydantic model, or pass a plain dict through unchanged.
+
+    Claims and gaps reach ``to_dict`` as either live pydantic models (in the
+    same process that produced them) or as plain dicts (after a Redis
+    round-trip). orjson cannot serialise a model, so a model is dumped to a
+    dict; a dict is returned as-is. Anything else is read as ``vars()`` — the
+    entity dicts written by the research service are plain dicts and are
+    unaffected, but a caller that hands in a small plain object must not lose
+    it, which is what an empty-dict fallback would do.
+    """
+    if hasattr(obj, "model_dump"):
+        try:
+            return {k: _jsonable(v) for k, v in obj.model_dump().items()}
+        except Exception:
+            pass
+    if isinstance(obj, dict):
+        return {k: _jsonable(v) for k, v in obj.items()}
+    try:
+        return {k: _jsonable(v) for k, v in vars(obj).items() if not k.startswith("_")}
+    except TypeError:
+        return {}
+
+
+def _jsonable(value: Any) -> Any:
+    """Convert a value into something orjson can encode.
+
+    Handles the shapes that actually appear in job state: pydantic models
+    (claims, citations, gaps), plain dicts, lists, and the small plain objects
+    a caller may supply. Nested values are converted too — a claim carries a
+    list of citations, and a citation that is still a live model would defeat
+    the point of the whole conversion.
+
+    A value that cannot be represented becomes its string form rather than
+    taking the entire persisted state down with it.
+    """
+    if value is None or isinstance(value, (str, int, float, bool)):
+        return value
+    if isinstance(value, dict):
+        return {k: _jsonable(v) for k, v in value.items()}
+    if isinstance(value, (list, tuple, set)):
+        return [_jsonable(v) for v in value]
+    if hasattr(value, "isoformat"):
+        try:
+            return value.isoformat()
+        except Exception:
+            return str(value)
+    if hasattr(value, "model_dump"):
+        try:
+            return {k: _jsonable(v) for k, v in value.model_dump().items()}
+        except Exception:
+            return str(value)
+    try:
+        data = {k: _jsonable(v) for k, v in vars(value).items() if not k.startswith("_")}
+    except TypeError:
+        return str(value)
+    # Public class attributes too — a small plain object may carry its data
+    # on the class rather than on the instance.
+    for klass in type(value).__mro__:
+        for k, v in vars(klass).items():
+            if k.startswith("_") or k in data or callable(v) or isinstance(v, property):
+                continue
+            data[k] = _jsonable(v)
+    return data
+
+
 def _normalise(text: str) -> str:
     return re.sub(r"\s+", " ", text.lower()).strip()
 
@@ -433,17 +517,30 @@ def _short_hash(value: str) -> str:
 _STATUS_KEYS = ("supported", "contested", "refuted", "unverified")
 
 
-def _field(obj: Any, name: str, default: Any = None) -> Any:
-    """Read ``name`` from an object OR a dict.
+def _field(obj: Any, name: str, default: Any = None, *aliases: str) -> Any:
+    """Read ``name`` (or an alias) from an object OR a dict.
 
     Evidence crosses a Redis round-trip (``to_dict`` → ``from_dict``) where
-    pydantic models become plain dicts. Every consumer must handle both or it
-    silently reads nothing — which is how a "supported" claim gets reported as
-    "unverified", and a populated glossary comes back empty.
+    pydantic models become plain dicts, and it is produced by more than one
+    writer using different key names. Every consumer must handle both the
+    object and the dict shape *and* both key spellings, or it silently reads
+    nothing — which is how a "supported" claim gets reported as "unverified",
+    a populated glossary comes back empty, and a knowledge-graph node degrades
+    to a placeholder type.
+
+    ``aliases`` are tried in order after ``name``, so a caller can accept both
+    the producer's spelling and a legacy one without branching.
     """
     if isinstance(obj, dict):
-        return obj.get(name, default)
-    return getattr(obj, name, default)
+        for key in (name, *aliases):
+            if obj.get(key) is not None:
+                return obj.get(key)
+        return default
+    for key in (name, *aliases):
+        value = getattr(obj, key, None)
+        if value is not None:
+            return value
+    return default
 
 
 def trust_summary(doc: ReportDocument) -> dict[str, int]:
@@ -454,10 +551,14 @@ def trust_summary(doc: ReportDocument) -> dict[str, int]:
     """
     summary: dict[str, int] = dict.fromkeys(_STATUS_KEYS, 0)
     summary["total"] = 0
+    # Supported by two or more independent pages (set by the verifier).
+    summary["corroborated"] = 0
     for claim in doc.claims:
         status = str(_field(claim, "status", "") or "unverified")
         summary["total"] += 1
         summary[status if status in summary else "unverified"] += 1
+        if len(set(_field(claim, "supporting_urls", None) or [])) >= 2:
+            summary["corroborated"] += 1
     summary["sources"] = sum(1 for b in doc.blocks if b.kind is BlockKind.SOURCE and not b.hidden)
     summary["gaps"] = len(doc.gaps)
     return summary
@@ -475,7 +576,9 @@ def trust_headline(summary: dict[str, int]) -> str:
 
     bits = [f"{summary['total']} findings"]
     if summary["supported"]:
-        bits.append(f"{summary['supported']} well-supported")
+        bits.append(f"{summary['supported']} verified against sources")
+    if summary.get("corroborated"):
+        bits.append(f"{summary['corroborated']} confirmed by 2+ sources")
     if summary["contested"]:
         bits.append(f"{summary['contested']} contested")
     if summary["refuted"]:

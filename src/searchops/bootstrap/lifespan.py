@@ -7,6 +7,8 @@ FastAPI's lifespan parameter ensures startup/shutdown are called correctly.
 
 from __future__ import annotations
 
+import asyncio
+import contextlib
 from contextlib import asynccontextmanager
 from typing import TYPE_CHECKING
 
@@ -39,6 +41,8 @@ async def create_lifespan(app: FastAPI) -> AsyncIterator[dict[str, object]]:
     # ─── Startup ─────────────────────────────────────────────────────────────
     container = await startup()
     app.state.container = container
+    # Restarts runs a previous process (a redeploy, a crash) left unfinished.
+    watchdog = asyncio.create_task(container.research_service.run_watchdog())
 
     log.info("FastAPI application ready")
 
@@ -46,4 +50,7 @@ async def create_lifespan(app: FastAPI) -> AsyncIterator[dict[str, object]]:
     yield {"container": container}
 
     # ─── Shutdown ────────────────────────────────────────────────────────────
+    watchdog.cancel()
+    with contextlib.suppress(asyncio.CancelledError):
+        await watchdog
     await shutdown()

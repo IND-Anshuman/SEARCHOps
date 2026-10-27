@@ -19,9 +19,13 @@ from typing import TYPE_CHECKING
 
 import structlog
 
+from searchops.a2a.dlq import A2ADeadLetterQueue
+from searchops.a2a.handshake import A2AHandshakeManager
+from searchops.a2a.router.router import A2AMessageRouter
 from searchops.config.settings import Settings, get_settings
 from searchops.feature_flags.manager import FeatureFlagManager
 from searchops.feature_flags.providers import EnvFeatureFlagProvider
+from searchops.mcp.client import MCPClient
 from searchops.platform.registry.agent_registry import AgentRegistry
 from searchops.platform.registry.capability_registry import CapabilityRegistry
 from searchops.platform.registry.tool_registry import ToolRegistry
@@ -66,6 +70,27 @@ class ApplicationContainer:
         self.agent_registry = AgentRegistry()
         self.tool_registry = ToolRegistry()
         self.capability_registry = CapabilityRegistry()
+
+        # Agent-to-agent message routing. Built here so the A2A protocol is
+        # reachable from the API rather than living as an isolated module:
+        # an unmounted router is indistinguishable from no router at all.
+        # The dead-letter queue is wired to the same Redis client, so a
+        # message that cannot be routed is recorded rather than lost.
+        self.a2a_dlq = A2ADeadLetterQueue(redis_client=cache.client)
+        self.a2a_router = A2AMessageRouter(
+            agent_registry=self.agent_registry,
+            capability_registry=self.capability_registry,
+            dlq=self.a2a_dlq,
+        )
+        self.a2a_handshake = A2AHandshakeManager(
+            agent_registry=self.agent_registry,
+            capability_registry=self.capability_registry,
+        )
+
+        # MCP client over the tool registry. The registry holds the tool
+        # definitions; the client is what actually dispatches to a bound
+        # handler.
+        self.mcp_client = MCPClient(tool_registry=self.tool_registry)
 
         log.info("ApplicationContainer initialized with all singletons")
 
