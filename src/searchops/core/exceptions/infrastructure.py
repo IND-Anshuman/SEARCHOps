@@ -67,6 +67,13 @@ class ExternalServiceError(InfrastructureError):
         message = f"External service '{service}' returned an error"
         if status_code:
             message += f" (HTTP {status_code})"
+        # The reason is part of the message. Without it, a caller sees only
+        # "External service 'MCP:brightdata' returned an error" and has to
+        # dig through the context dict to learn *why* — and the reason is
+        # usually the whole point ("no executable handler bound", "tool
+        # disabled", "credentials not configured").
+        if response_body:
+            message += f": {response_body}"
         super().__init__(
             message,
             context={

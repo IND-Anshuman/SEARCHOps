@@ -42,6 +42,26 @@ class ResearchMode(StrEnum):
     CORPUS = "corpus"
 
 
+class ReportType(StrEnum):
+    """The structure a finished report takes.
+
+    This is the canonical list. The report writer's section lists and length
+    targets (``searchops.llm.token_budget.REPORT_PROFILES``) and the frontend
+    dropdown both describe these same values, so a type added here without a
+    profile fails a test rather than silently producing a generic report.
+    """
+
+    AUTO = "auto"
+    EXECUTIVE_BRIEF = "executive_brief"
+    DETAILED_ANALYSIS = "detailed_analysis"
+    COMPARATIVE_ANALYSIS = "comparative_analysis"
+    NARRATIVE = "narrative"
+    ACADEMIC_RESEARCH = "academic_research"
+    BUSINESS_ANALYSIS = "business_analysis"
+    POLICY_BRIEF = "policy_brief"
+    CUSTOM = "custom"
+
+
 class ScrapePlan(BaseModel):
     """Per-mode parameters consumed by the research graph.
 
@@ -73,7 +93,7 @@ class ScrapePlan(BaseModel):
 
     # Stage 7 — claim dedup and verification.
     claim_dedup_aggressive: bool = False
-    verify_sampling_rate: float = Field(default=1.0, ge=0.0, le=1.0)
+    verify_sampling_rate: float = Field(default=0.3, ge=0.0, le=1.0)
 
     # Stage 8 — report shape.
     report_shape: str = "narrative"
@@ -106,11 +126,24 @@ class ScrapePlan(BaseModel):
             mode=resolved,
             max_pages=max_sources if max_sources is not None else 10,
             max_depth=1,
-            relevance_filter=False,
+            # Precision mode also benefits from the relevance filter: the
+            # ranker may have promoted a homework/forum URL (brainly, etc.)
+            # that has zero topical overlap. Without the filter, garbage
+            # pages reach the LLM and corrupt the report.
+            relevance_filter=True,
             claim_dedup_aggressive=False,
-            verify_sampling_rate=1.0,
+            verify_sampling_rate=0.3,
             report_shape="narrative",
         )
+
+
+class ReportTheme(StrEnum):
+    """PDF theme variants for report export."""
+
+    DEFAULT = "default"
+    MINIMAL = "minimal"
+    ACADEMIC = "academic"
+    EXECUTIVE = "executive"
 
 
 class ResearchConfig(BaseModel):
@@ -154,7 +187,26 @@ class ResearchConfig(BaseModel):
     )
 
     # ── Report shape ────────────────────────────────────────────────────────
+    target_pages: int = Field(
+        default=12,
+        ge=1,
+        le=100,
+        description="Target page count. Soft target: the structurer never pads to hit it, but never stops short either.",
+    )
+    report_theme: ReportTheme = Field(
+        default=ReportTheme.DEFAULT,
+        description="PDF theme variant (default, minimal, academic, executive).",
+    )
     max_report_sections: int = Field(default=12, ge=1, le=60, description="Maximum sections in the generated report.")
+    report_type: ReportType = Field(
+        default=ReportType.AUTO,
+        description="Report structure. Determines the section list, length and tone of the finished report.",
+    )
+    report_structure_prompt: str = Field(
+        default="",
+        max_length=2000,
+        description="Custom report structure instructions (used when report_type=custom).",
+    )
 
     # ── Budget the run is allowed to spend ──────────────────────────────────
     # Derived from max_pages by default so a partial config stays coherent:

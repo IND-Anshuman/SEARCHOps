@@ -9,8 +9,9 @@ from __future__ import annotations
 
 from typing import TYPE_CHECKING, Any
 
+import orjson
 import structlog
-from fastapi.responses import ORJSONResponse
+from fastapi.responses import JSONResponse
 from pydantic import ValidationError as PydanticValidationError
 from starlette.exceptions import HTTPException as StarletteHTTPException
 
@@ -26,6 +27,18 @@ if TYPE_CHECKING:
     from fastapi import FastAPI, Request
 
 log = structlog.get_logger(__name__)
+
+
+class ProblemResponse(JSONResponse):
+    """JSON error body serialised with orjson (handles datetimes, UUIDs, enums).
+
+    Replaces FastAPI's ``ORJSONResponse``, which is deprecated and emits a
+    warning on every error response.
+    """
+
+    def render(self, content: Any) -> bytes:
+        return orjson.dumps(content, default=str)
+
 
 _ERROR_CODE_TO_HTTP_STATUS: dict[ErrorCode, int] = {
     ErrorCode.ENTITY_NOT_FOUND: 404,
@@ -70,7 +83,7 @@ def _problem_detail(
     return body
 
 
-async def searchops_exception_handler(request: Request, exc: SEARCHOpsError) -> ORJSONResponse:
+async def searchops_exception_handler(request: Request, exc: SEARCHOpsError) -> ProblemResponse:
     """Handle all SEARCHOpsError subclasses."""
     status = _ERROR_CODE_TO_HTTP_STATUS.get(exc.code, 500)
 
@@ -94,7 +107,7 @@ async def searchops_exception_handler(request: Request, exc: SEARCHOpsError) -> 
     if isinstance(exc, CircuitBreakerOpenError):
         extra["retry_after"] = exc.retry_after_seconds
 
-    return ORJSONResponse(
+    return ProblemResponse(
         status_code=status,
         content=_problem_detail(
             status=status,
@@ -107,7 +120,7 @@ async def searchops_exception_handler(request: Request, exc: SEARCHOpsError) -> 
     )
 
 
-async def http_exception_handler(request: Request, exc: StarletteHTTPException) -> ORJSONResponse:
+async def http_exception_handler(request: Request, exc: StarletteHTTPException) -> ProblemResponse:
     """Handle standard Starlette HTTP exceptions."""
     log.info(
         "HTTP exception",
@@ -115,7 +128,7 @@ async def http_exception_handler(request: Request, exc: StarletteHTTPException) 
         detail=exc.detail,
         path=str(request.url),
     )
-    return ORJSONResponse(
+    return ProblemResponse(
         status_code=exc.status_code,
         content=_problem_detail(
             status=exc.status_code,
@@ -127,7 +140,7 @@ async def http_exception_handler(request: Request, exc: StarletteHTTPException) 
     )
 
 
-async def pydantic_validation_exception_handler(request: Request, exc: PydanticValidationError) -> ORJSONResponse:
+async def pydantic_validation_exception_handler(request: Request, exc: PydanticValidationError) -> ProblemResponse:
     """Handle Pydantic v2 validation errors from request parsing."""
     field_errors: dict[str, list[str]] = {}
     for error in exc.errors():
@@ -139,7 +152,7 @@ async def pydantic_validation_exception_handler(request: Request, exc: PydanticV
         field_errors=field_errors,
         path=str(request.url),
     )
-    return ORJSONResponse(
+    return ProblemResponse(
         status_code=422,
         content=_problem_detail(
             status=422,
@@ -152,14 +165,14 @@ async def pydantic_validation_exception_handler(request: Request, exc: PydanticV
     )
 
 
-async def unhandled_exception_handler(request: Request, exc: Exception) -> ORJSONResponse:
+async def unhandled_exception_handler(request: Request, exc: Exception) -> ProblemResponse:
     """Catch-all for unhandled exceptions. Never leaks stack traces."""
     log.exception(
         "Unhandled exception",
         exc_type=type(exc).__name__,
         path=str(request.url),
     )
-    return ORJSONResponse(
+    return ProblemResponse(
         status_code=500,
         content=_problem_detail(
             status=500,

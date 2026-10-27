@@ -32,18 +32,29 @@ def get_redis_client(settings: Settings | None = None) -> aioredis.Redis:
     cfg = settings or get_settings()
     c_cfg = cfg.cache
 
-    _redis_client = aioredis.Redis(
-        host=c_cfg.host,
-        port=c_cfg.port,
-        db=c_cfg.db,
-        password=c_cfg.password.get_secret_value() if c_cfg.password else None,
-        max_connections=c_cfg.max_connections,
-        socket_timeout=c_cfg.socket_timeout,
-        socket_connect_timeout=c_cfg.socket_connect_timeout,
-        retry_on_timeout=c_cfg.retry_on_timeout,
-        health_check_interval=c_cfg.health_check_interval,
-        decode_responses=False,  # raw bytes for performance with orjson
-    )
+    # aioredis v6 deprecated retry_on_timeout as a constructor arg
+    # (TimeoutError is included by default). Only pass it on v5.
+    import inspect
+
+    _sig = inspect.signature(aioredis.Redis.__init__)
+    _kwargs: dict[str, Any] = {
+        "host": c_cfg.host,
+        "port": c_cfg.port,
+        "db": c_cfg.db,
+        "password": c_cfg.password.get_secret_value() if c_cfg.password else None,
+        "max_connections": c_cfg.max_connections,
+        "socket_timeout": c_cfg.socket_timeout,
+        "socket_connect_timeout": c_cfg.socket_connect_timeout,
+        "health_check_interval": c_cfg.health_check_interval,
+        "decode_responses": False,  # raw bytes for performance with orjson
+        "ssl": c_cfg.ssl,
+    }
+    if c_cfg.ssl_cert_reqs is not None:
+        _kwargs["ssl_cert_reqs"] = c_cfg.ssl_cert_reqs
+    if "retry_on_timeout" in _sig.parameters:
+        _kwargs["retry_on_timeout"] = c_cfg.retry_on_timeout
+
+    _redis_client = aioredis.Redis(**_kwargs)
     log.info("Redis client connected", host=c_cfg.host, port=c_cfg.port, db=c_cfg.db)
     return _redis_client
 

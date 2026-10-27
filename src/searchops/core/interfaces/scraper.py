@@ -21,6 +21,7 @@ class ScrapeMode(enum.StrEnum):
     DOCLING_PDF = "docling_pdf"  # IBM Docling CPU layout transformer for PDFs
     BD_UNLOCKER = "bd_unlocker"  # Bright Data Web Unlocker — CAPTCHA bypass (~1-2s) PREMIUM
     BD_BROWSER = "bd_browser"  # Bright Data Cloud Scraping Browser CDP (~3-6s) PREMIUM
+    TAVILY_EXTRACT = "tavily_extract"  # Tavily Extract API (~1-3s, 1 credit per 5 pages)
     AUTO = "auto"  # Let the pipeline decide based on target URL
 
 

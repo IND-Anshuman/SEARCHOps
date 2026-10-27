@@ -2,12 +2,26 @@
 
 from __future__ import annotations
 
+from typing import Literal
+
 from pydantic import Field, SecretStr
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 
 class ScrapingSettings(BaseSettings):
     """Scraping configuration settings."""
+
+    # ── Which tools fetch the web ─────────────────────────────────────────
+    # "api":   paid APIs only. Search goes to the key-based providers (Tavily
+    #          first) and page text comes from Tavily Extract. No browser, no
+    #          SearXNG; the slim image does not even install them.
+    # "local": the free, self-hosted stack (SearXNG, Crawl4AI, Playwright,
+    #          stealth HTTP, PDF parsing). Needs `uv sync --extra local-tools`
+    #          and, for the browser tiers, `playwright install chromium`.
+    tool_profile: Literal["api", "local"] = Field(default="api", alias="TOOL_PROFILE")
+    # Tavily Extract depth: "basic" (1 credit per 5 pages) or "advanced"
+    # (2 per 5; renders JavaScript-heavy pages and tables better).
+    tavily_extract_depth: Literal["basic", "advanced"] = Field(default="basic", alias="TAVILY_EXTRACT_DEPTH")
 
     # ── Firecrawl ──────────────────────────────────────────────────────────
     firecrawl_api_key: SecretStr | None = Field(default=None, alias="FIRECRAWL_API_KEY")

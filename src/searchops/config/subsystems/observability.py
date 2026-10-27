@@ -9,7 +9,10 @@ from pydantic_settings import BaseSettings, SettingsConfigDict
 class ObservabilitySettings(BaseSettings):
     """Observability configuration settings."""
 
-    enabled: bool = Field(default=True, alias="OTEL_ENABLED")
+    # Off unless asked for: with no collector at OTEL_EXPORTER_OTLP_ENDPOINT the
+    # exporter retries and logs connection errors for the life of the process.
+    # Set OTEL_ENABLED=true once a collector (or a hosted OTLP endpoint) exists.
+    enabled: bool = Field(default=False, alias="OTEL_ENABLED")
     service_name: str = "searchops"
     service_version: str = "0.1.0"
     otlp_endpoint: str = Field(default="http://localhost:4317", alias="OTEL_EXPORTER_OTLP_ENDPOINT")

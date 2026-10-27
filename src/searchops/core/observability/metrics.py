@@ -230,7 +230,7 @@ CIRCUIT_BREAKER_STATE = Gauge(
 # ── Token economy & context engineering metrics ───────────────────────────────
 
 # ── Per-node token-economy & LLM accounting metrics ───────────────────────────
-# node: planner|search|rat|rank|scrape|extract_knowledge|extract_claims|critic|
+# node: planner|search|rat|rank|scrape|extract_evidence|critic|
 #       verifier|gap_analyst|state_pruner|report_writer
 # _NODE_* metrics exist so ops can answer "which graph node consumed the most
 # tokens" and whether caching actually reduced live API hits.
@@ -274,7 +274,7 @@ NODE_LLM_REQUEST_DURATION_SECONDS = Histogram(
 
 # Dedicated evidence-claim counters (highest token consumer in the design).
 EXTRACT_CLAIMS_TOTAL = Counter(
-    name="searchops_extract_claims_total",
+    name="searchops_extract_evidence_total",
     documentation="Claims extracted from scraped documents",
     labelnames=["node", "status"],  # status: extracted|cached|error
     registry=_REGISTRY,
