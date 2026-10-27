@@ -4,8 +4,9 @@ Unit tests for QdrantVectorRepository, RedisCache, Neo4jGraphRepository, and Dat
 
 from __future__ import annotations
 
-import pytest
 from unittest.mock import AsyncMock, MagicMock
+
+import pytest
 
 from searchops.infrastructure.cache.redis import RedisCache
 from searchops.infrastructure.vector.qdrant import QdrantVectorRepository

@@ -4,12 +4,12 @@ Unit tests for ResearchApplicationService lifecycle and execution.
 
 from __future__ import annotations
 
-import pytest
 from unittest.mock import AsyncMock, MagicMock
 
-from searchops.application.research_service import ResearchApplicationService, ResearchJobStatus
+import pytest
+
 from searchops.application.job_state_manager import JobStateManager
-from searchops.infrastructure.cache.redis import RedisCache
+from searchops.application.research_service import ResearchApplicationService, ResearchJobStatus
 from searchops.infrastructure.events.bus import RedisEventBus
 
 

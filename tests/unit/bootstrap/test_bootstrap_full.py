@@ -4,18 +4,22 @@ Unit tests for application startup, shutdown, and lifespan.
 
 from __future__ import annotations
 
-import pytest
-from unittest.mock import AsyncMock, patch
+from unittest.mock import patch
 
-from searchops.bootstrap.startup import startup, get_uptime_seconds
+import pytest
+
+from searchops.bootstrap.container import get_container
 from searchops.bootstrap.shutdown import shutdown
-from searchops.bootstrap.container import ApplicationContainer, get_container
+from searchops.bootstrap.startup import get_uptime_seconds, startup
 
 
 @pytest.mark.unit
 @pytest.mark.asyncio
 async def test_bootstrap_startup_and_shutdown():
-    with patch("searchops.bootstrap.startup.setup_tracer_provider"), patch("searchops.bootstrap.startup.setup_auto_instrumentation"):
+    with (
+        patch("searchops.bootstrap.startup.setup_tracer_provider"),
+        patch("searchops.bootstrap.startup.setup_auto_instrumentation"),
+    ):
         container = await startup()
         assert container is not None
         assert get_container() == container

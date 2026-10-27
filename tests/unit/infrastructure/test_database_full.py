@@ -4,10 +4,16 @@ Unit tests for database connection pooling, sessionmaker, and UnitOfWork lifecyc
 
 from __future__ import annotations
 
-import pytest
-from unittest.mock import AsyncMock, MagicMock
+from unittest.mock import AsyncMock
 
-from searchops.infrastructure.database.connection import get_engine, get_sessionmaker, close_engine, get_db_session
+import pytest
+
+from searchops.infrastructure.database.connection import (
+    close_engine,
+    get_db_session,
+    get_engine,
+    get_sessionmaker,
+)
 from searchops.infrastructure.database.unit_of_work import UnitOfWork
 
 

@@ -4,10 +4,10 @@ Unit tests for JobStateManager.
 Uses fakeredis to run a real Redis-protocol server in-process.
 No mocks of JobStateManager itself — the real implementation is tested.
 """
+
 from __future__ import annotations
 
 import asyncio
-from typing import AsyncGenerator
 
 import fakeredis.aioredis as fake_aioredis
 import pytest
@@ -35,14 +35,18 @@ async def job_state_manager(fake_redis):
 
 # ── create_job ────────────────────────────────────────────────────────────────
 
+
 @pytest.mark.asyncio
 async def test_create_job_persists_state(job_state_manager: JobStateManager):
     """create_job should persist job state and make it retrievable via get_job."""
-    await job_state_manager.create_job("job-001", {
-        "status": "pending",
-        "query": "test query",
-        "progress": 0,
-    })
+    await job_state_manager.create_job(
+        "job-001",
+        {
+            "status": "pending",
+            "query": "test query",
+            "progress": 0,
+        },
+    )
 
     state = await job_state_manager.get_job("job-001")
     assert state is not None
@@ -61,19 +65,26 @@ async def test_create_job_sets_job_id(job_state_manager: JobStateManager):
 
 # ── update_job ─────────────────────────────────────────────────────────────────
 
+
 @pytest.mark.asyncio
 async def test_update_job_merges_patch(job_state_manager: JobStateManager):
     """update_job should merge new fields without overwriting unrelated existing fields."""
-    await job_state_manager.create_job("job-003", {
-        "status": "pending",
-        "query": "original query",
-        "progress": 0,
-    })
+    await job_state_manager.create_job(
+        "job-003",
+        {
+            "status": "pending",
+            "query": "original query",
+            "progress": 0,
+        },
+    )
 
-    merged = await job_state_manager.update_job("job-003", {
-        "status": "running",
-        "progress": 25,
-    })
+    merged = await job_state_manager.update_job(
+        "job-003",
+        {
+            "status": "running",
+            "progress": 25,
+        },
+    )
 
     assert merged["status"] == "running"
     assert merged["progress"] == 25
@@ -94,6 +105,7 @@ async def test_update_job_persists_to_redis(job_state_manager: JobStateManager):
 
 # ── get_job / get_or_replay ───────────────────────────────────────────────────
 
+
 @pytest.mark.asyncio
 async def test_get_job_returns_none_for_unknown(job_state_manager: JobStateManager):
     """get_job should return None for a job that was never created."""
@@ -112,6 +124,7 @@ async def test_get_or_replay_returns_latest_state(job_state_manager: JobStateMan
 
 # ── delete_job ────────────────────────────────────────────────────────────────
 
+
 @pytest.mark.asyncio
 async def test_delete_job_removes_state(job_state_manager: JobStateManager):
     """delete_job should remove the job from Redis."""
@@ -122,6 +135,7 @@ async def test_delete_job_removes_state(job_state_manager: JobStateManager):
 
 
 # ── subscribe (pub/sub) ───────────────────────────────────────────────────────
+
 
 @pytest.mark.asyncio
 async def test_subscribe_receives_updates():
@@ -159,7 +173,7 @@ async def test_subscribe_receives_updates():
 
     try:
         await asyncio.wait_for(sub_task, timeout=3.0)
-    except asyncio.TimeoutError:
+    except TimeoutError:
         sub_task.cancel()
         pytest.fail("subscribe() timed out — no messages received")
 

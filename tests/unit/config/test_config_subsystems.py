@@ -5,6 +5,7 @@ Unit tests for configuration subsystem settings models.
 from __future__ import annotations
 
 import pytest
+
 from searchops.config.settings import get_settings
 
 

@@ -4,19 +4,18 @@ Unit and Integration tests for Database Layer, Repositories, and Unit of Work.
 
 from __future__ import annotations
 
-from typing import Any
 import pytest
 import pytest_asyncio
-from sqlalchemy.ext.asyncio import AsyncSession, create_async_engine, async_sessionmaker
-from sqlalchemy.orm import Mapped, mapped_column
 from sqlalchemy import String
+from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker, create_async_engine
+from sqlalchemy.orm import Mapped, mapped_column
 
 from searchops.infrastructure.database.base import BaseORM, TimestampMixin
 from searchops.infrastructure.database.repositories.base import SQLAlchemyRepository
 from searchops.infrastructure.database.unit_of_work import UnitOfWork
 
-
 # ── Sample Model & Domain Class for Testing ─────────────────────────────────
+
 
 class DummyORM(BaseORM, TimestampMixin):
     id: Mapped[str] = mapped_column(String, primary_key=True)
@@ -39,6 +38,7 @@ class DummyRepository(SQLAlchemyRepository[DummyORM, DummyDomain, str]):
 
 # ── Fixtures ─────────────────────────────────────────────────────────────────
 
+
 @pytest_asyncio.fixture
 async def async_db_session() -> AsyncSession:
     """In-memory SQLite async engine and session for fast isolated testing."""
@@ -54,6 +54,7 @@ async def async_db_session() -> AsyncSession:
 
 
 # ── Tests ────────────────────────────────────────────────────────────────────
+
 
 @pytest.mark.unit
 @pytest.mark.asyncio
