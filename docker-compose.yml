@@ -118,7 +118,9 @@ services:
       dockerfile: Dockerfile
       args:
         # Public by design; compiled into the web app. Same value the API verifies tokens with.
-        VITE_CLERK_PUBLISHABLE_KEY: "${CLERK_PUBLISHABLE_KEY:?set CLERK_PUBLISHABLE_KEY in .env}"
+        VITE_CLERK_PUBLISHABLE_KEY: "${CLERK_PUBLISHABLE_KEY:-}"
+        # Sign-in is paused unless AUTH_ENABLED=true (then CLERK_PUBLISHABLE_KEY is needed).
+        VITE_AUTH_ENABLED: "${AUTH_ENABLED:-false}"
         # api (default): small image, Tavily only. local: adds the free tools + Chromium.
         TOOL_PROFILE: "${TOOL_PROFILE:-api}"
     container_name: searchops-api

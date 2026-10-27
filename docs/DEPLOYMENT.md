@@ -58,7 +58,7 @@ Environment for the container (see `.env.example` for every setting):
 
 With `APP_ENV=production` (or `staging`) the process **will not start** if:
 
-- no authentication is configured, or `AUTH_DISABLED_EXPLICITLY=true`;
+- no authentication is configured (unless `AUTH_DISABLED_EXPLICITLY=true`, which only warns);
 - `API_ALLOWED_ORIGINS` contains `*`.
 
 It starts with a logged **warning** if localhost is still an allowed origin, the Clerk key is

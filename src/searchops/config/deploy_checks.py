@@ -39,7 +39,8 @@ def check_deployment(settings: Settings) -> DeployReport:
     strict = settings.env in _STRICT_ENVS
 
     if sec.auth_disabled_explicitly:
-        report.errors.append("AUTH_DISABLED_EXPLICITLY is true: the API would be unauthenticated.")
+        # A named opt-in (e.g. a public demo), so it warns rather than refusing to start.
+        report.warnings.append("AUTH_DISABLED_EXPLICITLY is true: the API is unauthenticated.")
     elif not sec.clerk_enabled and not configured_key(sec):
         report.errors.append(
             "No authentication is configured. Set CLERK_PUBLISHABLE_KEY (people) and/or "

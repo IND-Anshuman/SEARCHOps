@@ -34,10 +34,13 @@ RUN --mount=type=cache,target=/root/.npm npm ci
 COPY frontend/ ./
 # Empty API base = same origin: the API serves this app, so calls and the
 # WebSocket go to whatever host the page was loaded from.
-ARG VITE_CLERK_PUBLISHABLE_KEY
+# Sign-in is paused unless VITE_AUTH_ENABLED=true; then the Clerk key is required.
+ARG VITE_CLERK_PUBLISHABLE_KEY=""
+ARG VITE_AUTH_ENABLED=false
 ENV VITE_API_BASE_URL="" \
-    VITE_CLERK_PUBLISHABLE_KEY=${VITE_CLERK_PUBLISHABLE_KEY}
-RUN test -n "$VITE_CLERK_PUBLISHABLE_KEY" || (echo "Build with --build-arg VITE_CLERK_PUBLISHABLE_KEY=pk_..." && exit 1)
+    VITE_CLERK_PUBLISHABLE_KEY=${VITE_CLERK_PUBLISHABLE_KEY} \
+    VITE_AUTH_ENABLED=${VITE_AUTH_ENABLED}
+RUN [ "$VITE_AUTH_ENABLED" != "true" ] || test -n "$VITE_CLERK_PUBLISHABLE_KEY" || (echo "Build with --build-arg VITE_CLERK_PUBLISHABLE_KEY=pk_..." && exit 1)
 RUN npm run build
 
 # ── Stage 2: Python dependencies ─────────────────────────────────────────────

@@ -57,13 +57,18 @@ def test_production_refuses_to_start_without_authentication(monkeypatch: pytest.
         enforce_deployment(settings)
 
 
-def test_production_refuses_wildcard_origins_and_disabled_auth(monkeypatch: pytest.MonkeyPatch) -> None:
+def test_production_refuses_wildcard_origins(monkeypatch: pytest.MonkeyPatch) -> None:
     with pytest.raises(RuntimeError, match=r"\*"):
         enforce_deployment(_settings(monkeypatch, API_ALLOWED_ORIGINS='["*"]'))
+
+
+def test_explicitly_disabled_auth_warns_but_starts(monkeypatch: pytest.MonkeyPatch) -> None:
+    _settings(monkeypatch)
     monkeypatch.setenv("AUTH_DISABLED_EXPLICITLY", "true")
     get_settings.cache_clear()
-    with pytest.raises(RuntimeError, match="unauthenticated"):
-        enforce_deployment(Settings())
+    report = enforce_deployment(Settings())
+    assert report.errors == []
+    assert any("unauthenticated" in w for w in report.warnings)
 
 
 def test_development_only_warns(monkeypatch: pytest.MonkeyPatch) -> None:

@@ -4,22 +4,20 @@
     <meta charset="UTF-8" />
     <link rel="icon" type="image/svg+xml" href="/vite.svg" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-    <title>SearchOps — Research Archive</title>
+    <title>SEARCHOps — Reports you can check</title>
     <meta
       name="description"
-      content="Run a question through an autonomous research pipeline and get a report whose claims are individually cited and graded."
+      content="SEARCHOps runs a question through an autonomous research pipeline and returns a report whose every claim is cited and graded."
     />
-    <!--
-      Four voices, strictly assigned (see DESIGN.md):
-        Fraunces       display  — report titles, section heads, the mark
-        Source Serif 4 reading  — the report body, at a 68ch measure
-        Instrument Sans interface — all chrome
-        JetBrains Mono data     — measured numbers and IDs only
-      The stacks fall back to Georgia/system-ui when the network is unavailable,
-      so the page still renders. The font link lives here rather than in the
-      stylesheet because a CSS @import after @tailwind is invalid and PostCSS
-      rejects the whole file.
-    -->
+    <!-- Apply the saved theme before first paint, so dark mode never flashes light. -->
+    <script>
+      try {
+        var t = localStorage.getItem('searchops:theme');
+        if (t === 'dark' || (!t && window.matchMedia('(prefers-color-scheme: dark)').matches)) {
+          document.documentElement.classList.add('dark');
+        }
+      } catch (e) {}
+    </script>
     <link rel="preconnect" href="https://fonts.googleapis.com">
     <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
     <link
@@ -27,14 +25,8 @@
       rel="stylesheet"
     />
   </head>
-  <body class="bg-paper text-ink font-sans antialiased overflow-hidden">
-    <!--
-      Selection is intentionally NOT disabled here. A research workbench whose
-      entire job is reading and quoting reports must let the user select and
-      copy text. Individual components that should not be selectable (status
-      chrome, telemetry readouts) opt out with their own select-none class.
-    -->
+  <body class="bg-paper text-ink font-sans antialiased">
     <div id="root"></div>
-    <script type="module" src="/src/main.tsx"></script>
+    <script type="module" src="/src/landing/main.tsx"></script>
   </body>
 </html>

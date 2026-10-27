@@ -4,6 +4,7 @@ import { useWorkbenchStore } from '../shared/store/useWorkbenchStore';
 import { money, num, str } from '../shared/lib/safe';
 import { Command, Bell, Sun, Moon } from 'lucide-react';
 import { UserButton } from '@clerk/react';
+import { AUTH_ENABLED } from '../shared/lib/authMode';
 import { StatusMarkGlyph } from '../shared/components/StatusMark';
 
 /**
@@ -180,8 +181,8 @@ export const Header: React.FC = () => {
         {isDark ? <Sun className="w-3.5 h-3.5 text-ink" /> : <Moon className="w-3.5 h-3.5 text-ink" />}
       </button>
 
-      {/* Account: profile and sign-out, from Clerk. */}
-      <UserButton />
+      {/* Account: profile and sign-out, from Clerk (only while sign-in is on). */}
+      {AUTH_ENABLED ? <UserButton /> : null}
     </header>
   );
 };
