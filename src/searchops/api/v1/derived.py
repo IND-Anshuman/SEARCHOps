@@ -30,6 +30,7 @@ from searchops.application.report_document import (
     trust_headline,
     trust_summary,
 )
+from searchops.middleware.auth import visible_job
 
 if TYPE_CHECKING:
     from searchops.application.research_service import ResearchApplicationService
@@ -52,7 +53,7 @@ def _get_service(request: Request) -> ResearchApplicationService:
 
 async def _load_job(job_id: str, service: ResearchApplicationService) -> dict[str, Any]:
     """Fetch a job, or raise the status that tells the user what to do next."""
-    job_data = await service.job_state_manager.get_job(job_id)
+    job_data = visible_job(await service.job_state_manager.get_job(job_id))
     if job_data is None:
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND,
@@ -161,11 +162,20 @@ async def get_trust(
 
     Counts real claim statuses. A contested or refuted claim is always named —
     the line exists so the reader can judge, and hiding problems defeats it.
+
+    The measured evidence-quality metrics (citation coverage, hallucination
+    rate) are included when the run produced them. They are omitted rather
+    than defaulted when they were not measured, so a reader can tell the
+    difference between "0% coverage" and "not measured".
     """
     job_data = await _load_job(job_id, service)
     doc = _document(job_data)
     summary = trust_summary(doc)
-    return {"summary": summary, "headline": trust_headline(summary)}
+    result: dict[str, Any] = {"summary": summary, "headline": trust_headline(summary)}
+    evaluation = job_data.get("evaluation_stats") or {}
+    if evaluation:
+        result["evaluation"] = evaluation
+    return result
 
 
 @router.get(

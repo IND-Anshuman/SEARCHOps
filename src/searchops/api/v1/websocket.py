@@ -2,6 +2,8 @@
 WebSocket endpoint for real-time research progress streaming.
 
 Architecture:
+  0. Authenticate (origin + API key or session cookie) before accepting —
+     the HTTP auth middleware never sees WebSocket connections
   1. Accept connection
   2. Retrieve current job state (replay for late subscribers)
   3. If job already terminal → send final snapshot → close gracefully
@@ -27,6 +29,15 @@ from typing import TYPE_CHECKING, Any
 import structlog
 from fastapi import APIRouter, WebSocket, WebSocketDisconnect
 
+from searchops.config.settings import get_settings
+from searchops.middleware.auth import (
+    AuthResult,
+    authenticate,
+    bearer_from_subprotocols,
+    can_access_job,
+    origin_allowed,
+)
+
 if TYPE_CHECKING:
     from searchops.bootstrap.container import ApplicationContainer
 
@@ -36,6 +47,9 @@ router = APIRouter(tags=["websocket"])
 
 _HEARTBEAT_INTERVAL_SECONDS = 30
 _TERMINAL_STATUSES = frozenset({"completed", "failed"})
+# Application close codes (4000-4999); closing before accept rejects the handshake.
+_CLOSE_UNAUTHORIZED = 4401
+_CLOSE_FORBIDDEN_ORIGIN = 4403
 
 
 @router.websocket("/ws/research/{job_id}")
@@ -49,7 +63,21 @@ async def research_progress_ws(
     connection opens, the final state is sent immediately and the connection
     closes cleanly without waiting for pub/sub messages that will never arrive.
     """
-    await websocket.accept()
+    settings = get_settings()
+    if not origin_allowed(websocket.headers.get("origin"), websocket.headers.get("host"), settings):
+        log.warning("WebSocket rejected: foreign origin", job_id=job_id, origin=websocket.headers.get("origin"))
+        await websocket.close(code=_CLOSE_FORBIDDEN_ORIGIN)
+        return
+    # Browsers cannot set headers on a socket, so the Clerk session token
+    # arrives as a subprotocol; the server echoes "searchops", never the token.
+    ws_token, accept_protocol = bearer_from_subprotocols(websocket.headers.get("sec-websocket-protocol"))
+    auth = await authenticate(websocket.headers, websocket.cookies, settings, bearer_token=ws_token)
+    if auth.result not in (AuthResult.OK, AuthResult.DISABLED):
+        log.warning("WebSocket rejected: not authenticated", job_id=job_id, reason=auth.result.value)
+        await websocket.close(code=_CLOSE_UNAUTHORIZED)
+        return
+
+    await websocket.accept(subprotocol=accept_protocol)
     log.info("WebSocket client connected", job_id=job_id)
 
     # Resolve the shared singleton from app state
@@ -64,6 +92,10 @@ async def research_progress_ws(
     try:
         # ── Step 1: Late-subscriber replay ────────────────────────────────────
         current_state = await job_state_manager.get_or_replay(job_id)
+
+        if current_state is not None and not can_access_job(current_state, auth.principal):
+            # Someone else's report: indistinguishable from a missing one.
+            current_state = None
 
         if current_state is None:
             # Job not found — send a 404-equivalent and close

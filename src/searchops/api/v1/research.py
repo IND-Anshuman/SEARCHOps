@@ -27,10 +27,17 @@ from pydantic import BaseModel, Field, field_validator
 
 from searchops.application.exports.deck import export_deck
 from searchops.application.exports.docx_export import export_docx
-from searchops.application.exports.pdf_export import ExportUnavailableError, export_pdf
+from searchops.application.exports.pdf_export import ExportUnavailableError, export_pdf, pdf_export_available
+from searchops.application.exports.study import build_study_guide
 from searchops.application.report_document import ReportDocument
-from searchops.application.research_service import ResearchApplicationService, ResearchJobStatus
-from searchops.core.context.research import ResearchConfig, ResearchMode
+from searchops.application.research_service import (
+    DailyJobLimitExceededError,
+    JobLimitExceededError,
+    ResearchApplicationService,
+    ResearchJobStatus,
+)
+from searchops.core.context.research import ReportTheme, ReportType, ResearchConfig, ResearchMode
+from searchops.middleware.auth import current_principal, visible_job
 
 log = structlog.get_logger(__name__)
 
@@ -55,6 +62,27 @@ class StartResearchRequest(BaseModel):
     config: ResearchConfig | None = Field(
         default=None,
         description="Optional scraping/verification tuning. Omit for mode defaults.",
+    )
+    report_type: ReportType = Field(
+        default=ReportType.AUTO,
+        description=(
+            "Structure of the finished report. Determines its sections, length and tone. auto infers from the query."
+        ),
+    )
+    report_structure_prompt: str = Field(
+        default="",
+        max_length=2000,
+        description="Custom report structure instructions (used when report_type=custom).",
+    )
+    target_pages: int = Field(
+        default=12,
+        ge=1,
+        le=100,
+        description="Target page count. Soft target: the structurer never pads to hit it, but never stops short either.",
+    )
+    report_theme: ReportTheme = Field(
+        default=ReportTheme.DEFAULT,
+        description="PDF theme variant (default, minimal, academic, executive).",
     )
 
     @field_validator("config")
@@ -104,6 +132,10 @@ class JobStatusResponse(BaseModel):
     depth: str = "standard"
     mode: str = "precision"
     progress: int = 0
+    # How many times the run was restarted after its process died (a redeploy
+    # or crash), and when it last was. 0 for a run that went straight through.
+    resume_count: int = 0
+    resumed_at: str | None = None
     # Report
     final_report: str | None = None
     # Why the report looks the way it does. Populated by report_writer via
@@ -121,6 +153,9 @@ class JobStatusResponse(BaseModel):
     # Structured evidence: what the run established, and what it could not.
     evidence_gaps: list[dict[str, Any]] = []
     evidence_claims: list[dict[str, Any]] = []
+    # Evidence-quality metrics measured by the evaluation node: citation
+    # coverage, hallucination rate, claim status mix.
+    evaluation_stats: dict[str, Any] = {}
     citations: list[str] = []
     entity_count: int = 0
     source_count: int = 0
@@ -131,12 +166,26 @@ class JobStatusResponse(BaseModel):
     cost_budget: float = 5.0
     # Graph nodes topology
     nodes: list[LangGraphNodeSchema] = []
+    # Event logs — the console and the chat telemetry stream read these.
+    # Undeclared here they were silently stripped by `extra="ignore"`, so a
+    # reloaded job rendered an empty console while the data existed in Redis.
+    logs: list[LogItemSchema] = []
+    # Knowledge-graph entities/relations, exposed in the same camelCase shape
+    # the graph endpoint already uses, so the explorer survives a reload.
+    entities: list[KGNodeSchema] = []
+    relations: list[KGEdgeSchema] = []
+    # Retrieved vector chunks for the vector inspector.
+    chunks: list[VectorChunkSchema] = []
     # Error
     error: str | None = None
     # Timestamps
     created_at: str | None = None
     start_time: str | None = None
     completed_at: str | None = None
+    # Report shape, echoed back so a reloaded job can reproduce its own export.
+    report_theme: str | None = None
+    report_type: str | None = None
+    target_pages: int | None = None
 
     model_config = {"populate_by_name": True, "extra": "ignore"}
 
@@ -271,13 +320,24 @@ async def start_research(
             detail=(f"Invalid mode {payload.mode!r}. Expected one of: {', '.join(m.value for m in ResearchMode)}."),
         ) from exc
 
-    job_id = await service.start_research(
-        query=payload.query,
-        depth=payload.depth,
-        max_sources=payload.max_sources,
-        mode=payload.mode,
-        config=payload.config,
-    )
+    try:
+        job_id = await service.start_research(
+            query=payload.query,
+            depth=payload.depth,
+            max_sources=payload.max_sources,
+            mode=payload.mode,
+            config=payload.config,
+            report_type=payload.report_type,
+            report_structure_prompt=payload.report_structure_prompt,
+            target_pages=payload.target_pages,
+            report_theme=payload.report_theme,
+            owner_id=_owner_id(),
+        )
+    except JobLimitExceededError as exc:
+        retry_after = "3600" if isinstance(exc, DailyJobLimitExceededError) else "60"
+        raise HTTPException(
+            status_code=status.HTTP_429_TOO_MANY_REQUESTS, detail=str(exc), headers={"Retry-After": retry_after}
+        ) from exc
     return StartResearchResponse(
         job_id=job_id,
         status=ResearchJobStatus.PENDING,
@@ -294,7 +354,7 @@ async def get_research_status(
     job_id: str,
     service: ResearchApplicationService = Depends(_get_service),
 ) -> JobStatusResponse:
-    data = await service.get_job_status(job_id)
+    data = visible_job(await service.get_job_status(job_id))
     if data is None:
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND,
@@ -312,7 +372,7 @@ async def get_research_graph(
     job_id: str,
     service: ResearchApplicationService = Depends(_get_service),
 ) -> KnowledgeGraphResponse:
-    job_data = await service.get_job_status(job_id)
+    job_data = visible_job(await service.get_job_status(job_id))
     if job_data is None:
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND,
@@ -325,11 +385,11 @@ async def get_research_graph(
     for e in job_data.get("entities", []):
         nodes.append(
             KGNodeSchema(
-                id=e.get("id", ""),
-                canonical_id=e.get("canonical_id", ""),
+                id=str(e.get("id", "")),
+                canonical_id=e.get("canonical_id") or e.get("canonicalId") or "",
                 name=e.get("name", ""),
-                type=e.get("entity_type", "technology"),
-                summary=e.get("description", ""),
+                type=e.get("type") or e.get("entity_type") or "technology",
+                summary=e.get("summary") or e.get("description") or "",
             )
         )
 
@@ -356,7 +416,7 @@ async def get_research_chunks(
     job_id: str,
     service: ResearchApplicationService = Depends(_get_service),
 ) -> VectorChunksResponse:
-    job_data = await service.get_job_status(job_id)
+    job_data = visible_job(await service.get_job_status(job_id))
     if job_data is None:
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND,
@@ -376,7 +436,7 @@ async def get_research_logs(
     job_id: str,
     service: ResearchApplicationService = Depends(_get_service),
 ) -> LogsResponse:
-    job_data = await service.get_job_status(job_id)
+    job_data = visible_job(await service.get_job_status(job_id))
     if job_data is None:
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND,
@@ -396,6 +456,8 @@ async def delete_research_job(
     job_id: str,
     service: ResearchApplicationService = Depends(_get_service),
 ) -> None:
+    if visible_job(await service.job_state_manager.get_job(job_id)) is None:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=f"Research job '{job_id}' not found.")
     await service.job_state_manager.delete_job(job_id)
 
 
@@ -414,6 +476,7 @@ _EXPORT_DIR = Path(tempfile.gettempdir()) / "searchops_exports"
 _PPTX_MIME = "application/vnd.openxmlformats-officedocument.presentationml.presentation"
 _DOCX_MIME = "application/vnd.openxmlformats-officedocument.wordprocessingml.document"
 _PDF_MIME = "application/pdf"
+_PDF_FALLBACK_HEADER = "X-PDF-Fallback"
 
 
 def _load_document(job_data: dict[str, Any]) -> ReportDocument:
@@ -438,6 +501,12 @@ def _load_document(job_data: dict[str, Any]) -> ReportDocument:
     )
 
 
+def _owner_id() -> str:
+    """The Clerk user starting a job; empty for API-key (service) callers."""
+    principal = current_principal()
+    return principal.user_id if principal is not None and principal.kind == "user" else ""
+
+
 def _require_completed_job(job_data: dict[str, Any] | None, job_id: str) -> dict[str, Any]:
     if job_data is None:
         raise HTTPException(
@@ -452,27 +521,52 @@ def _require_completed_job(job_data: dict[str, Any] | None, job_id: str) -> dict
     return job_data
 
 
+async def _study_guide_for_export(
+    doc: ReportDocument,
+    service: ResearchApplicationService,
+) -> Any:
+    """Build the study guide the exporters render.
+
+    The exporters used to look for ``doc._study_guide`` — an attribute nothing
+    ever set — so the study-guide section silently never appeared in any PDF,
+    DOCX or PPTX. Building it here, once, with the shared LLM router fixes
+    that without the exporters acquiring a router of their own.
+
+    Any failure returns ``None``: an export must never fail because the study
+    guide could not be generated. When that happens the section is omitted,
+    which is honest, rather than filled with invented questions.
+    """
+    try:
+        return await build_study_guide(doc, router=service.llm_router)
+    except Exception as exc:  # pragma: no cover - defensive
+        log.warning("export.study_guide_failed", error=str(exc))
+        return None
+
+
 @router.get(
     "/{job_id}/export/deck",
-    summary="Export the report as a PowerPoint deck",
+    summary="Export the report as a PowerPoint deck (pass include_study_guide=false to skip the study guide)",
     response_class=FileResponse,
 )
 async def export_research_deck(
     job_id: str,
     service: ResearchApplicationService = Depends(_get_service),
+    include_study_guide: bool = True,
 ) -> FileResponse:
     """Export a completed report as .pptx.
 
     Speaker notes carry the claims backing each slide, so a reader can check
     what they are shown.
     """
-    job_data = _require_completed_job(await service.job_state_manager.get_job(job_id), job_id)
+    job_data = _require_completed_job(visible_job(await service.job_state_manager.get_job(job_id)), job_id)
     doc = _load_document(job_data)
+    guide = await _study_guide_for_export(doc, service) if include_study_guide else None
     try:
         path = export_deck(
             doc,
             out_dir=_EXPORT_DIR,
-            title=str(job_data.get("query", "") or "Research Report"),
+            title=doc.report_title(),
+            study_guide=guide,
         )
     except Exception as exc:
         log.error("export.deck.failed", job_id=job_id, error=str(exc))
@@ -485,25 +579,28 @@ async def export_research_deck(
 
 @router.get(
     "/{job_id}/export/docx",
-    summary="Export the report as a Word document",
+    summary="Export the report as a Word document (pass include_study_guide=false to skip the study guide)",
     response_class=FileResponse,
 )
 async def export_research_docx(
     job_id: str,
     service: ResearchApplicationService = Depends(_get_service),
+    include_study_guide: bool = True,
 ) -> FileResponse:
     """Export a completed report as .docx.
 
     Real heading styles and per-section claim footnotes, so the file survives
     into a compliance record or an email thread intact.
     """
-    job_data = _require_completed_job(await service.job_state_manager.get_job(job_id), job_id)
+    job_data = _require_completed_job(visible_job(await service.job_state_manager.get_job(job_id)), job_id)
     doc = _load_document(job_data)
+    guide = await _study_guide_for_export(doc, service) if include_study_guide else None
     try:
         path = export_docx(
             doc,
             out_dir=_EXPORT_DIR,
-            title=str(job_data.get("query", "") or "Research Report"),
+            title=doc.report_title(),
+            study_guide=guide,
         )
     except Exception as exc:
         log.error("export.docx.failed", job_id=job_id, error=str(exc))
@@ -516,25 +613,38 @@ async def export_research_docx(
 
 @router.get(
     "/{job_id}/export/pdf",
-    summary="Export the report as a PDF",
+    summary="Export the report as a PDF (pass include_study_guide=false to skip the study guide)",
     response_class=FileResponse,
 )
 async def export_research_pdf(
     job_id: str,
     service: ResearchApplicationService = Depends(_get_service),
+    include_study_guide: bool = True,
 ) -> FileResponse:
     """Export a completed report as .pdf via headless Chromium.
 
     Fails loudly when Chromium is unavailable — an export that quietly returns
     an empty file is discovered only after the document has been sent.
     """
-    job_data = _require_completed_job(await service.job_state_manager.get_job(job_id), job_id)
+    job_data = _require_completed_job(visible_job(await service.job_state_manager.get_job(job_id)), job_id)
+    # Checked before the study guide, which costs an LLM call: without a
+    # browser on the server there is nothing to spend it on. The header tells
+    # the web app to print the report page in the user's browser instead.
+    if not pdf_export_available():
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail="This deployment does not render PDFs on the server; print the report page from the browser.",
+            headers={_PDF_FALLBACK_HEADER: "browser-print"},
+        )
     doc = _load_document(job_data)
+    guide = await _study_guide_for_export(doc, service) if include_study_guide else None
     try:
         path = await export_pdf(
             doc,
             out_dir=_EXPORT_DIR,
-            title=str(job_data.get("query", "") or "Research Report"),
+            title=doc.report_title(),
+            theme=str(job_data.get("report_theme", "default") or "default"),
+            study_guide=guide,
         )
     except ExportUnavailableError as exc:
         log.error("export.pdf.unavailable", job_id=job_id, error=str(exc))
@@ -587,7 +697,7 @@ async def apply_block_operation(
     explains why in language the UI can show a user; the document is returned
     unchanged.
     """
-    job_data = await service.job_state_manager.get_job(job_id)
+    job_data = visible_job(await service.job_state_manager.get_job(job_id))
     if job_data is None:
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND,

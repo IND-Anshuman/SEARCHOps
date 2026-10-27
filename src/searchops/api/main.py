@@ -52,26 +52,31 @@ def create_app() -> FastAPI:
     """
     settings = get_settings()
 
+    # Fail fast on a configuration that would leave a public deployment open.
+    from searchops.config.deploy_checks import enforce_deployment
+
+    enforce_deployment(settings)
+
+    # Interactive docs describe every endpoint; production hides them unless asked.
+    docs_hidden = settings.env == "production" and not settings.api.expose_docs
+
     app = FastAPI(
         title="SEARCHOps Platform",
         description="Enterprise Autonomous Technology Intelligence Platform",
         version=settings.app_version,
-        docs_url=settings.api.docs_url,
-        redoc_url=settings.api.redoc_url,
-        openapi_url=settings.api.openapi_url,
+        docs_url=None if docs_hidden else settings.api.docs_url,
+        redoc_url=None if docs_hidden else settings.api.redoc_url,
+        openapi_url=None if docs_hidden else settings.api.openapi_url,
         root_path=settings.api.root_path,
         lifespan=create_lifespan,
     )
 
     # ─── Middleware (order matters — outermost first) ──────────────────────
-    # CORS must be outermost so preflight requests are handled before auth
-    app.add_middleware(
-        CORSMiddleware,
-        allow_origins=settings.api.allowed_origins,
-        allow_credentials=settings.api.cors_allow_credentials,
-        allow_methods=settings.api.cors_allow_methods,
-        allow_headers=settings.api.cors_allow_headers,
-    )
+    # Starlette wraps each added middleware around the previous ones, so the
+    # LAST one added is outermost. CORS is added last (below) so that even the
+    # 401/403/429 responses produced by auth and rate limiting carry CORS
+    # headers; otherwise a cross-origin browser sees an opaque network error
+    # instead of the status it needs to refresh its session token.
 
     # Prometheus metrics (wraps all requests)
     if settings.observability.prometheus_enabled:
@@ -90,6 +95,27 @@ def create_app() -> FastAPI:
     app.add_middleware(RateLimiterMiddleware)
     app.add_middleware(APIKeyAuthMiddleware)
 
+    # Host-header allowlist (public deployments only): stops requests that
+    # reach the app under a name you did not configure. localhost stays allowed
+    # so container health probes keep working.
+    if settings.env in ("production", "staging"):
+        from starlette.middleware.trustedhost import TrustedHostMiddleware
+
+        hosts = list(dict.fromkeys([*settings.security.allowed_hosts, "localhost", "127.0.0.1"]))
+        app.add_middleware(TrustedHostMiddleware, allowed_hosts=hosts)
+
+    from searchops.middleware.security_headers import SecurityHeadersMiddleware
+
+    app.add_middleware(SecurityHeadersMiddleware)
+
+    app.add_middleware(
+        CORSMiddleware,
+        allow_origins=settings.api.allowed_origins,
+        allow_credentials=settings.api.cors_allow_credentials,
+        allow_methods=settings.api.cors_allow_methods,
+        allow_headers=settings.api.cors_allow_headers,
+    )
+
     # ─── Exception handlers ────────────────────────────────────────
     register_exception_handlers(app)
 
@@ -99,6 +125,11 @@ def create_app() -> FastAPI:
 
     app.include_router(health_router, prefix="/health", tags=["Health"])
     app.include_router(metrics_router, prefix="", tags=["Metrics"])
+
+    # ─── Browser sign-in (API key → HttpOnly session cookie) ───────────
+    from searchops.api.v1.auth import router as auth_router
+
+    app.include_router(auth_router, prefix="/api/v1")
 
     # ─── Research routers ────────────────────────────────────────────
     from searchops.api.v1.research import router as research_router
@@ -111,6 +142,11 @@ def create_app() -> FastAPI:
     from searchops.api.v1.derived import router as derived_router
 
     app.include_router(derived_router, prefix="/api/v1")
+
+    # ─── Agent protocols (MCP tool execution, A2A messaging) ───────────────
+    from searchops.api.v1.agent_protocols import router as agent_protocols_router
+
+    app.include_router(agent_protocols_router, prefix="/api/v1")
 
     # ── Frontend static files ──────────────────────────────────────────
     from fastapi.staticfiles import StaticFiles

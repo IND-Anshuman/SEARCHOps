@@ -64,3 +64,22 @@ class A2ADeadLetterQueue:
             except Exception:
                 pass
         return len(self._memory_dlq)
+
+    async def get_failed_envelopes(self, limit: int = 50) -> list[dict[str, Any]]:
+        """Return the failed envelopes, newest first.
+
+        A message that failed to route must be inspectable — a failure that is
+        invisible is a failure that gets retried forever. The Redis stream is
+        read first (it survives a restart); the in-memory list is the
+        fallback when no Redis client is configured.
+        """
+        if self.redis_client:
+            try:
+                entries = await self.redis_client.xrevrange(self.stream_key, "+", "-", count=limit)
+                decoded: list[dict[str, Any]] = []
+                for _stream_id, fields in entries:
+                    decoded.append({k.decode() if isinstance(k, bytes) else k: v for k, v in fields.items()})
+                return decoded
+            except Exception as exc:
+                log.warning("Failed to read A2A DLQ from Redis, using memory fallback", error=str(exc))
+        return list(reversed(self._memory_dlq[-limit:]))
