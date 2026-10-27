@@ -5,6 +5,7 @@ Unit tests for domain, exception handlers, and shared domain models to ensure >8
 from __future__ import annotations
 
 import pytest
+
 from searchops.shared.domain.aggregate import AggregateRoot
 from searchops.shared.domain.entity import BaseEntity
 from searchops.shared.domain.value_object import BaseValueObject

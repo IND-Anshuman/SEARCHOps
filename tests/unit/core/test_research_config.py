@@ -14,6 +14,8 @@ Every knob a user can turn is a knob they can break. The contract:
 
 from __future__ import annotations
 
+from enum import StrEnum
+
 import pytest
 from pydantic import ValidationError
 
@@ -69,12 +71,22 @@ def test_boundary_values_are_accepted(field, value):
 def test_every_field_declares_its_bound():
     """Guard against adding a knob with no ceiling.
 
-    A new field without ge/le is an unbounded request waiting to happen.
+    A new field without a bound is an unbounded request waiting to happen.
+    A field is bounded by exactly one of three mechanisms, and the point of
+    this test is that it must be bounded by *one of them*:
+
+    * numeric bounds (``ge``/``le``) for counts and rates
+    * a ``max_length`` for free text
+    * an enum type, which can only take its declared values
     """
     for name, field in ResearchConfig.model_fields.items():
         meta = field.metadata
-        has_bound = any(hasattr(m, "ge") or hasattr(m, "le") for m in meta)
-        assert has_bound, f"{name} has no ge/le bound"
+        has_numeric_bound = any(hasattr(m, "ge") or hasattr(m, "le") for m in meta)
+        has_length_bound = any(hasattr(m, "max_length") for m in meta)
+        is_enum = isinstance(field.annotation, type) and issubclass(field.annotation, StrEnum)
+        assert has_numeric_bound or has_length_bound or is_enum, (
+            f"{name} is unbounded: give it ge/le, a max_length, or an enum type"
+        )
 
 
 # ── Cross-field consistency ──────────────────────────────────────────────────

@@ -8,7 +8,10 @@ import pytest
 import structlog
 
 from searchops.core.logging.configure import configure_logging
-from searchops.core.logging.processors import add_correlation_id, redact_sensitive_fields, add_open_telemetry_ids
+from searchops.core.logging.processors import (
+    add_correlation_id,
+    redact_sensitive_fields,
+)
 from searchops.core.observability.metrics import HTTP_REQUESTS_TOTAL, SERVICE_INFO
 from searchops.core.observability.tracer import get_tracer, setup_tracer_provider
 
@@ -52,9 +55,7 @@ def test_tracer_setup():
     )
 
 
-
 @pytest.mark.unit
 def test_metrics_objects():
     assert HTTP_REQUESTS_TOTAL is not None
     assert SERVICE_INFO is not None
-

@@ -1,13 +1,12 @@
 from __future__ import annotations
 
-import time
 import pytest
 
-from searchops.core.context.execution import BudgetTracker, ExecutionContext
-from searchops.core.context.research import ResearchContext, ResearchDepth
 from searchops.core.context.agent import AgentContext
+from searchops.core.context.execution import BudgetTracker, ExecutionContext
 from searchops.core.context.request import RequestContext
-from searchops.typing.aliases import AgentId, CorrelationId, RequestId, TaskId, UserId, ExecutionId
+from searchops.core.context.research import ResearchContext, ResearchDepth
+from searchops.typing.aliases import AgentId, CorrelationId, RequestId, TaskId
 
 
 @pytest.mark.unit

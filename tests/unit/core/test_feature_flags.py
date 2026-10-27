@@ -2,8 +2,8 @@ from __future__ import annotations
 
 import pytest
 
-from searchops.feature_flags.providers import EnvFeatureFlagProvider, InMemoryFeatureFlagProvider
 from searchops.feature_flags.manager import FeatureFlagManager
+from searchops.feature_flags.providers import EnvFeatureFlagProvider, InMemoryFeatureFlagProvider
 
 
 @pytest.mark.unit

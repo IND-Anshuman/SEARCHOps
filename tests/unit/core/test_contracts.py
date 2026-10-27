@@ -2,10 +2,10 @@ from __future__ import annotations
 
 import pytest
 
-from searchops.shared.contracts.pagination import PaginationParams, PaginatedResponse
-from searchops.shared.contracts.health import HealthResponse, ComponentHealth, HealthStatusValue
-from searchops.shared.contracts.errors import ErrorResponse, ErrorDetail, FieldError
 from searchops.shared.contracts.base import BaseRequest, BaseResponse
+from searchops.shared.contracts.errors import ErrorDetail, ErrorResponse, FieldError
+from searchops.shared.contracts.health import HealthResponse, HealthStatusValue
+from searchops.shared.contracts.pagination import PaginatedResponse, PaginationParams
 
 
 @pytest.mark.unit

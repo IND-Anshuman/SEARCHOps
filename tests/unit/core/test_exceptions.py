@@ -3,10 +3,8 @@ from __future__ import annotations
 import pytest
 
 from searchops.core.exceptions.application import (
-    ApplicationError,
     AuthorizationError,
     BudgetExceededError,
-    ValidationError,
 )
 from searchops.core.exceptions.base import (
     ErrorCode,
@@ -14,14 +12,12 @@ from searchops.core.exceptions.base import (
     SEARCHOpsError,
 )
 from searchops.core.exceptions.domain import (
-    BusinessRuleViolationError,
     DuplicateEntityError,
     EntityNotFoundError,
 )
 from searchops.core.exceptions.infrastructure import (
     CircuitBreakerOpenError,
     ExternalServiceError,
-    InfrastructureError,
     TimeoutError,
 )
 
@@ -67,9 +63,7 @@ def test_entity_not_found_error_message():
 
 @pytest.mark.unit
 def test_duplicate_entity_error():
-    err = DuplicateEntityError(
-        entity_type="User", conflicting_field="email", conflicting_value="test@example.com"
-    )
+    err = DuplicateEntityError(entity_type="User", conflicting_field="email", conflicting_value="test@example.com")
     assert err.code == ErrorCode.DUPLICATE_ENTITY
     assert "User with email='test@example.com' already exists" in err.message
 

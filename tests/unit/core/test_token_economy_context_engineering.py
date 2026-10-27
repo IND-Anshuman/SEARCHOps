@@ -5,14 +5,19 @@ Verifies StateTokenOptimizer, ContextDeltaCompressor, and ContextAssemblyService
 
 from __future__ import annotations
 
+from typing import TYPE_CHECKING
+
 import pytest
 
 from searchops.core.context.assembly import ContextAssemblyService
 from searchops.core.context.delta_compressor import ContextDeltaCompressor
 from searchops.knowledge.domain.entity import KGEntity, KGRelation
-from searchops.orchestration.nodes.extract_knowledge import extract_knowledge_node
-from searchops.orchestration.nodes.state_compressor import StateTokenOptimizer, state_compressor_node
-from searchops.orchestration.states.research_state import ResearchState
+from searchops.orchestration.nodes.state_compressor import (
+    StateTokenOptimizer,
+)
+
+if TYPE_CHECKING:
+    from searchops.orchestration.states.research_state import ResearchState
 
 
 @pytest.mark.unit

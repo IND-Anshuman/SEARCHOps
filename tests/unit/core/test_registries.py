@@ -2,10 +2,10 @@ from __future__ import annotations
 
 import pytest
 
+from searchops.core.interfaces.agent import AgentCapability, AgentCard
 from searchops.platform.registry.agent_registry import AgentRegistry
-from searchops.platform.registry.tool_registry import ToolRegistry, ToolDefinition
 from searchops.platform.registry.capability_registry import CapabilityRegistry
-from searchops.core.interfaces.agent import AgentCard, AgentCapability
+from searchops.platform.registry.tool_registry import ToolDefinition, ToolRegistry
 from searchops.typing.aliases import AgentId
 
 
