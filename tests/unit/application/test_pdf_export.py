@@ -41,6 +41,41 @@ def test_render_html_includes_report_content():
     assert "Surface codes are the leading approach." in html
 
 
+def test_render_html_includes_cover_page():
+    html = render_html(_doc(), title="QEC")
+    assert "cover" in html.lower()
+    assert "SEARCHOps Research Platform" in html
+
+
+def test_render_html_includes_table_of_contents():
+    html = render_html(_doc(), title="QEC")
+    assert "Table of Contents" in html
+
+
+def test_render_html_includes_trust_summary():
+    doc = _doc()
+    doc.claims = [{"id": "c1", "text": "Surface codes work", "status": "supported", "citations": []}]
+    html = render_html(doc, title="QEC")
+    assert "Trust" in html or "trust" in html.lower()
+
+
+def test_render_html_includes_glossary():
+    doc = _doc()
+    doc.entities = [{"name": "Qubit", "entity_type": "Concept", "description": "Quantum bit", "confidence": 0.9}]
+    html = render_html(doc, title="QEC")
+    assert "Glossary" in html
+    assert "Qubit" in html
+
+
+def test_render_html_renders_inline_markdown():
+    doc = ReportDocument.from_markdown("j", "q", "## X\n\n**bold** and *italic* and `code`\n")
+    html = render_html(doc, title="X")
+    assert "<strong>bold</strong>" in html
+    assert "<em>italic</em>" in html
+    assert "<code>code</code>" in html
+    assert "**" not in html
+
+
 def test_render_html_includes_every_source_url():
     html = render_html(_doc(), title="QEC")
     assert "https://ibm.com/a" in html

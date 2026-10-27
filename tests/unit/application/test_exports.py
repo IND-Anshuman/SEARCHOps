@@ -227,3 +227,224 @@ def test_export_deck_strips_raw_markdown_syntax(tmp_path):
     assert "###" not in text
     assert "`" not in text
     assert "Key Finding: Surface codes show promising results with O(d^2) scaling Source" in text
+
+
+def test_export_deck_has_dark_title_slide(tmp_path):
+    out = export_deck(_doc(), out_dir=tmp_path, title="QEC")
+    from pptx import Presentation
+
+    prs = Presentation(str(out))
+    # First slide should be the title slide
+    text = _all_text(prs)
+    assert "QEC" in text
+    assert "SEARCHOps" in text
+
+
+def test_export_deck_includes_trust_slide_when_claims_exist(tmp_path):
+    doc = _doc()
+    doc.claims = [{"id": "c1", "text": "Surface codes work", "status": "supported", "citations": []}]
+    out = export_deck(doc, out_dir=tmp_path, title="QEC")
+    from pptx import Presentation
+
+    text = _all_text(Presentation(str(out)))
+    assert "Trust" in text or "trust" in text.lower()
+
+
+def test_export_deck_includes_glossary_slide_when_entities_exist(tmp_path):
+    doc = _doc()
+    doc.entities = [{"name": "Qubit", "entity_type": "Concept", "description": "Quantum bit", "confidence": 0.9}]
+    out = export_deck(doc, out_dir=tmp_path, title="QEC")
+    from pptx import Presentation
+
+    text = _all_text(Presentation(str(out)))
+    assert "Glossary" in text
+    assert "Qubit" in text
+
+
+def test_export_deck_is_concise_not_one_slide_per_h3(tmp_path):
+    """A 55-slide deck from 20 H3 sections is a chore, not a briefing."""
+    md = (
+        "# Title\n\n"
+        "## Section 1\n\n"
+        "### H3 A\n\nContent A\n\n"
+        "### H3 B\n\nContent B\n\n"
+        "## Section 2\n\n"
+        "### H3 C\n\nContent C\n\n"
+        "## Sources\n\n- https://example.com\n"
+    )
+    doc = ReportDocument.from_markdown("j", "q", md)
+    out = export_deck(doc, out_dir=tmp_path, title="Test")
+    from pptx import Presentation
+
+    prs = Presentation(str(out))
+    # Should be title + 2 H1 sections + sources = 4 slides (not 5+)
+    assert len(prs.slides) <= 5
+
+
+def test_export_deck_truncates_long_bullets(tmp_path):
+    """Long bullets should be truncated for readability."""
+    long_text = "This is a very long bullet point that should be truncated. " * 5
+    md = f"# Title\n\n## Section\n\n{long_text}\n\n## Sources\n\n- https://example.com\n"
+    doc = ReportDocument.from_markdown("j", "q", md)
+    out = export_deck(doc, out_dir=tmp_path, title="Test")
+    from pptx import Presentation
+
+    text = _all_text(Presentation(str(out)))
+    assert "..." in text
+
+
+def test_export_deck_sources_slide_is_last(tmp_path):
+    out = export_deck(_doc(), out_dir=tmp_path, title="QEC")
+    from pptx import Presentation
+
+    prs = Presentation(str(out))
+    last_slide = prs.slides[-1]
+    text = ""
+    for shape in last_slide.shapes:
+        if shape.has_text_frame:
+            text += shape.text_frame.text
+    assert "Sources" in text or "https://" in text
+
+
+# ── DOCX new features ───────────────────────────────────────────────────────
+
+
+def test_export_docx_has_cover_page(tmp_path):
+    out = export_docx(_doc(), out_dir=tmp_path, title="QEC Report")
+    from docx import Document
+
+    d = Document(str(out))
+    text = "\n".join(p.text for p in d.paragraphs)
+    assert "SEARCHOps" in text
+    assert "QEC Report" in text
+
+
+def test_export_docx_has_table_of_contents(tmp_path):
+    out = export_docx(_doc(), out_dir=tmp_path, title="QEC Report")
+    from docx import Document
+
+    d = Document(str(out))
+    text = "\n".join(p.text for p in d.paragraphs)
+    assert "Table of Contents" in text
+    assert "Executive Summary" in text
+
+
+def test_export_docx_has_trust_summary(tmp_path):
+    doc = _doc()
+    doc.claims = [{"id": "c1", "text": "Surface codes work", "status": "supported", "citations": []}]
+    out = export_docx(doc, out_dir=tmp_path, title="QEC")
+    from docx import Document
+
+    d = Document(str(out))
+    text = "\n".join(p.text for p in d.paragraphs)
+    assert "Trust" in text or "trust" in text.lower()
+
+
+def test_export_docx_has_glossary(tmp_path):
+    doc = _doc()
+    doc.entities = [{"name": "Qubit", "entity_type": "Concept", "description": "Quantum bit", "confidence": 0.9}]
+    out = export_docx(doc, out_dir=tmp_path, title="QEC")
+    from docx import Document
+
+    d = Document(str(out))
+    text = "\n".join(p.text for p in d.paragraphs)
+    assert "Glossary" in text
+    assert "Qubit" in text
+
+
+def test_export_docx_renders_inline_markdown(tmp_path):
+    """Bold/italic/code should be rendered, not left as raw markdown."""
+    doc = ReportDocument.from_markdown("j", "q", "## X\n\n**bold** and *italic* and `code`\n")
+    out = export_docx(doc, out_dir=tmp_path, title="Test")
+    from docx import Document
+
+    d = Document(str(out))
+    # Check that bold/italic runs exist (not raw ** or *)
+    full_text = "\n".join(p.text for p in d.paragraphs)
+    assert "**" not in full_text
+    assert "`" not in full_text
+    assert "bold" in full_text
+    assert "italic" in full_text
+    assert "code" in full_text
+
+
+# ── Study guide ──────────────────────────────────────────────────────────────
+#
+# Regression: the exporters used to read `getattr(doc, '_study_guide', None)`.
+# Nothing in the codebase ever set that attribute, so the study-guide section
+# silently never appeared in any PDF, DOCX or PPTX. The caller now builds the
+# guide once with the shared router and passes it in.
+
+
+def _guide():
+    from searchops.application.exports.study import StudyGuide, StudyQuestion
+
+    return StudyGuide(
+        questions=[StudyQuestion(question="What is a surface code?", answer="A 2D lattice code.", section="Findings")],
+        note="",
+    )
+
+
+def test_export_docx_renders_the_study_guide_when_supplied(tmp_path):
+    out = export_docx(_doc(), out_dir=tmp_path, title="QEC", study_guide=_guide())
+    from docx import Document
+
+    text = "\n".join(p.text for p in Document(str(out)).paragraphs)
+    assert "Study Guide" in text
+    assert "What is a surface code?" in text
+
+
+def test_export_deck_renders_the_study_guide_when_supplied(tmp_path):
+    from pptx import Presentation
+
+    out = export_deck(_doc(), out_dir=tmp_path, title="QEC", study_guide=_guide())
+    text = _all_text(Presentation(str(out)))
+    assert "Study Guide" in text
+    assert "What is a surface code?" in text
+
+
+def test_exporters_still_produce_a_valid_file_with_no_study_guide(tmp_path):
+    """No guide must never break an export, and must never invent questions."""
+    out = export_docx(_doc(), out_dir=tmp_path, title="QEC")
+    from docx import Document
+
+    text = "\n".join(p.text for p in Document(str(out)).paragraphs)
+    assert "Study Guide" not in text
+    assert out.exists()
+
+
+def test_pdf_renders_the_study_guide_when_supplied(tmp_path):
+    from searchops.application.exports.pdf_export import render_html
+
+    html = render_html(_doc(), title="QEC", study_guide=_guide())
+    assert "Study Guide" in html
+    assert "What is a surface code?" in html
+
+
+def test_toc_does_not_list_a_section_twice(tmp_path):
+    """Regression: the report's own 'Sources' heading was listed twice.
+
+    The exporter appended its own "Sources" entry to the contents while the
+    report already carried a "## Sources" heading, so the contents promised
+    two Sources sections and only one existed.
+    """
+    import re
+
+    from searchops.application.exports.pdf_export import render_html
+
+    html = render_html(_doc(), title="QEC", study_guide=_guide())
+    toc = re.search(r"<div class='toc'>.*?</div>", html, re.S)
+    assert toc, "the report must have a table of contents"
+    assert toc.group(0).count("Sources") == 1
+
+
+def test_toc_omits_the_study_guide_when_none_was_supplied(tmp_path):
+    """A contents entry for a section that is not rendered is a broken TOC."""
+    import re
+
+    from searchops.application.exports.pdf_export import render_html
+
+    html = render_html(_doc(), title="QEC")
+    toc = re.search(r"<div class='toc'>.*?</div>", html, re.S)
+    assert toc, "the report must have a table of contents"
+    assert "Study Guide" not in toc.group(0)

@@ -279,7 +279,7 @@ def test_trust_headline_mentions_every_non_zero_status():
     doc = ReportDocument.from_markdown("job1", "q", MD, claims=claims)
     line = trust_headline(trust_summary(doc))
     assert "2 findings" in line
-    assert "1 well-supported" in line
+    assert "1 verified against sources" in line
     assert "1 contested" in line
 
 
