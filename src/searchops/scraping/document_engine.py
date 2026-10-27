@@ -189,6 +189,14 @@ class TableStore:
 # ---------------------------------------------------------------------------
 
 
+def _docling_installed() -> bool:
+    """Docling (and PyTorch behind it) is an optional extra; without it scanned
+    PDFs use the PyMuPDF fallback instead of failing."""
+    import importlib.util
+
+    return importlib.util.find_spec("docling") is not None
+
+
 class DocumentIngestionEngine:
     """
     CPU-only hybrid PDF parser.
@@ -268,7 +276,7 @@ class DocumentIngestionEngine:
 
         if has_native_text:
             result = self._pymupdf_fast_path(doc, page_count)
-        elif self._use_docling and source_path is not None:
+        elif self._use_docling and source_path is not None and _docling_installed():
             doc.close()
             result = self._docling_path(source_path, page_count)
             result["char_density"] = chars_per_page

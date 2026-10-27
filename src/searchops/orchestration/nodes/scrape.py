@@ -3,9 +3,8 @@ Scrape node: runs the scraping pipeline over a crawl frontier.
 
 Two modes, one node:
 
-* **precision** — scrape the URLs search handed us (free tier: at most 3),
-  truncated to MAX_DOC_CHARS. No link following; identical to the previous
-  behaviour.
+* **precision** — scrape the URLs search handed us (free tier: at most 3).
+  No link following.
 * **corpus** — drive a BFS frontier so the crawler follows in-scope links
   from each fetched page, up to the plan's ``max_pages`` / ``max_depth``.
 
@@ -23,16 +22,16 @@ import structlog
 
 from searchops.core.interfaces.scraper import ScrapeRequest
 from searchops.knowledge.evaluation.relevance import filter_by_relevance
-from searchops.llm.token_budget import MAX_DOC_CHARS
+from searchops.orchestration.passages import MAX_PAGE_CHARS
 from searchops.scraping.frontier import CrawlConfig, CrawlFrontier
+from searchops.scraping.page_title import infer_title
 
 if TYPE_CHECKING:
     from searchops.orchestration.states.research_state import ResearchState
-    from searchops.scraping.pipeline import ScrapingPipeline
+    from searchops.scraping.factory import PageFetcher
 
 log = structlog.get_logger(__name__)
 
-_MAX_CONCURRENT = 2  # free tier: 2 parallel scrapes max
 _MAX_URLS = 3  # free tier: cap total URLs per run
 
 
@@ -57,7 +56,7 @@ class _InMemorySeen:
 async def scrape_node(
     state: ResearchState,
     *,
-    pipeline: ScrapingPipeline,
+    pipeline: PageFetcher,
 ) -> ResearchState:
     """Scrape ``urls_to_scrape``, crawling further when the plan says to."""
     plan = state.get("scrape_plan")
@@ -68,7 +67,8 @@ async def scrape_node(
         config = CrawlConfig()
         max_pages = _MAX_URLS  # free-tier default cap when no scrape_plan is configured
 
-    urls = state.get("urls_to_scrape", [])[:max_pages]
+    fetched = {d.get("url") for d in state.get("scraped_contents", []) or [] if isinstance(d, dict)}
+    urls = [u for u in state.get("urls_to_scrape", []) if u not in fetched][:max_pages]
     log.info("Scrape node executing", seed_count=len(urls), max_pages=max_pages)
 
     # Reuse the pipeline's own seen-set when it has one, so the frontier and
@@ -79,33 +79,62 @@ async def scrape_node(
     scraped: list[dict[str, Any]] = []
     failed: list[str] = []
     concurrency = min(max(max_pages // 2, 4), 10)
-    semaphore = asyncio.Semaphore(concurrency)
 
     async def _fetch(page_url: str) -> dict[str, Any] | None:
-        async with semaphore:
+        try:
             result = await pipeline.execute(ScrapeRequest(url=page_url))
-            # Discover links even from a failed page: a 404 can still be a
-            # hub whose children are worth crawling, and abandoning its links
-            # would let one dead page truncate the corpus.
-            await frontier.record_links(page_url, result.html or result.markdown or "")
-            if result.status_code != 200:
-                return None
-            raw = result.markdown or result.html or ""
-            return {
-                "url": page_url,
-                "content": raw[:MAX_DOC_CHARS],  # truncate before LLM
-                "title": result.title or "",
-            }
+        except Exception as exc:
+            log.warning("Scrape failed", url=page_url, error=str(exc))
+            return None
+        # Discover links even from a failed page: a 404 can still be a
+        # hub whose children are worth crawling, and abandoning its links
+        # would let one dead page truncate the corpus.
+        await frontier.record_links(page_url, result.html or result.markdown or "")
+        if result.status_code != 200:
+            return None
+        raw = result.markdown or result.html or ""
+        if not raw.strip():
+            return None
+        return {
+            "url": page_url,
+            # Keep the page, not its first screenful: extraction retrieves
+            # the passages relevant to the question from the whole page.
+            "content": raw[:MAX_PAGE_CHARS],
+            # Not every engine reports a title; an untitled page is cited as a bare URL.
+            "title": infer_title(result.title, result.html, result.markdown),
+        }
 
     await frontier.add_seeds(urls)
 
-    # Fetch loop: pop the frontier until it is empty or the page cap is hit.
-    while (page := await frontier.next_url()) is not None:
-        outcome = await _fetch(page.url)
-        if outcome is None:
-            failed.append(page.url)
-        else:
-            scraped.append(outcome)
+    # Worker pool over the frontier. Each worker pops the next URL, fetches
+    # it, and loops; links a page discovers are enqueued as it completes, so
+    # workers that find the queue momentarily empty wait for in-flight pages
+    # before concluding the crawl is done.
+    in_flight = 0
+    progress = asyncio.Event()
+
+    async def _worker() -> None:
+        nonlocal in_flight
+        while True:
+            page = await frontier.next_url()
+            if page is None:
+                if in_flight == 0:
+                    return
+                progress.clear()
+                await progress.wait()
+                continue
+            in_flight += 1
+            try:
+                outcome = await _fetch(page.url)
+            finally:
+                in_flight -= 1
+                progress.set()
+            if outcome is None:
+                failed.append(page.url)
+            else:
+                scraped.append(outcome)
+
+    await asyncio.gather(*(_worker() for _ in range(concurrency)))
 
     # Stage 4 — deterministic relevance filter (corpus mode only). Free
     # BM25 scoring drops off-topic pages *before* any LLM call sees them, so
@@ -122,7 +151,8 @@ async def scrape_node(
         **frontier.stats_dict(),
     )
     return {
-        "scraped_contents": scraped,
+        "scraped_contents": [{**d, "content": ""} for d in scraped],
+        "round_documents": scraped,
         "failed_urls": failed,
         "frontier_stats": frontier.stats_dict(),
         "relevance_stats": relevance,
