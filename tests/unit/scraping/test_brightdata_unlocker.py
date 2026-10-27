@@ -4,12 +4,13 @@ Unit tests for BrightDataUnlockerScraper.
 All tests mock httpx to avoid real proxy calls.
 Run: uv run pytest tests/unit/scraping/test_brightdata_unlocker.py -v
 """
+
 from __future__ import annotations
 
-import pytest
-import respx
-import httpx
 from unittest.mock import AsyncMock, MagicMock, patch
+
+import httpx
+import pytest
 
 from searchops.core.interfaces.scraper import ScrapeMode, ScrapeRequest, ScrapeResult
 from searchops.scraping.brightdata_unlocker import BrightDataUnlockerScraper, build_bd_unlocker
@@ -25,9 +26,7 @@ def _make_mock_cfg(
     cfg = MagicMock()
     cfg.brightdata_customer_id = customer_id
     cfg.brightdata_zone_unlocker = zone_unlocker
-    cfg.brightdata_zone_password = (
-        MagicMock(get_secret_value=lambda: zone_password) if zone_password else None
-    )
+    cfg.brightdata_zone_password = MagicMock(get_secret_value=lambda: zone_password) if zone_password else None
     cfg.request_timeout = request_timeout
     return cfg
 
@@ -162,19 +161,22 @@ async def test_health_check_failure(scraper):
     assert is_healthy is False
 
 
-@pytest.mark.asyncio
-async def test_proxy_url_construction():
-    """Verify proxy URL is correctly built from customer_id, zone, and password."""
-    cfg = _make_mock_cfg(
+def test_proxy_url_construction():
+    """Verify proxy URL is correctly built via build_unlocker_proxy."""
+    from searchops.scraping.bd_auth import build_unlocker_proxy
+
+    proxy_url, auth = build_unlocker_proxy(
         customer_id="brd-customer-abc123",
-        zone_password="my-secret-pwd",
-        zone_unlocker="unlocker",
+        zone="unlocker",
+        password="my-secret-pwd",
     )
-    scraper = BrightDataUnlockerScraper(cfg)
-    assert "brd-customer-abc123" in scraper._proxy_url
-    assert "unlocker" in scraper._proxy_url
-    assert "my-secret-pwd" in scraper._proxy_url
-    assert "brd.superproxy.io:22225" in scraper._proxy_url
+    # Proxy URL must NOT contain credentials (security invariant)
+    assert "brd-customer-abc123" not in proxy_url
+    assert "my-secret-pwd" not in proxy_url
+    assert "brd.superproxy.io:22225" in proxy_url
+    # Credentials are in the auth object, not the URL
+    assert "brd-customer-abc123" in repr(auth)
+    assert "my-secret-pwd" not in repr(auth)  # password is masked
 
 
 @pytest.mark.asyncio

@@ -5,12 +5,13 @@ Unit tests for scraping cache, DLQ manager, transport pool, and scraper implemen
 from __future__ import annotations
 
 import pytest
-from searchops.core.interfaces.scraper import ScrapeRequest, ScrapeResult, ScrapeMode
+
+from searchops.core.interfaces.scraper import ScrapeMode, ScrapeRequest
 from searchops.scraping.cache import ContentHashCache
-from searchops.scraping.dlq import ScrapeDLQManager, FailedScrapeRecord
-from searchops.scraping.transport import get_transport_pool, close_transport_pool
+from searchops.scraping.dlq import ScrapeDLQManager
 from searchops.scraping.firecrawl import FirecrawlScraper
 from searchops.scraping.playwright import PlaywrightScraper
+from searchops.scraping.transport import close_transport_pool, get_transport_pool
 
 
 class MockCache:

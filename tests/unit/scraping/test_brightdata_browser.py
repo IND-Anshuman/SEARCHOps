@@ -4,12 +4,14 @@ Unit tests for BrightDataBrowserScraper.
 All tests mock Playwright CDP to avoid real cloud browser calls.
 Run: uv run pytest tests/unit/scraping/test_brightdata_browser.py -v
 """
+
 from __future__ import annotations
 
-import pytest
-from unittest.mock import AsyncMock, MagicMock, patch, PropertyMock
+from unittest.mock import AsyncMock, MagicMock, patch
 
-from searchops.core.interfaces.scraper import ScrapeMode, ScrapeRequest, ScrapeResult
+import pytest
+
+from searchops.core.interfaces.scraper import ScrapeMode, ScrapeRequest
 from searchops.scraping.brightdata_browser import BrightDataBrowserScraper, build_bd_browser
 
 
@@ -22,9 +24,7 @@ def _make_mock_cfg(
     cfg = MagicMock()
     cfg.brightdata_customer_id = customer_id
     cfg.brightdata_zone_scraping_browser = zone_scraping_browser
-    cfg.brightdata_zone_password = (
-        MagicMock(get_secret_value=lambda: zone_password) if zone_password else None
-    )
+    cfg.brightdata_zone_password = MagicMock(get_secret_value=lambda: zone_password) if zone_password else None
     cfg.request_timeout = request_timeout
     return cfg
 
@@ -70,13 +70,13 @@ def _make_playwright_mocks(html_content: str, title: str, final_url: str):
 async def test_scrape_success(scraper):
     """Should return ScrapeResult with status 200 for a successful cloud browser fetch."""
     html = "<html><body><h1>Dynamic Page</h1></body></html>"
-    mock_ctx, mock_page, mock_browser = _make_playwright_mocks(
+    mock_ctx, _mock_page, _mock_browser = _make_playwright_mocks(
         html_content=html,
         title="Dynamic Page",
         final_url="https://example.com/final",
     )
 
-    with patch("searchops.scraping.brightdata_browser.async_playwright", return_value=mock_ctx):
+    with patch("playwright.async_api.async_playwright", return_value=mock_ctx):
         result = await scraper.scrape(ScrapeRequest(url="https://example.com"))
 
     assert result.status_code == 200
@@ -96,10 +96,8 @@ async def test_scrape_with_wait_for_selector(scraper):
         final_url="https://spa.example.com",
     )
 
-    with patch("searchops.scraping.brightdata_browser.async_playwright", return_value=mock_ctx):
-        await scraper.scrape(
-            ScrapeRequest(url="https://spa.example.com", wait_for_selector=".loaded")
-        )
+    with patch("playwright.async_api.async_playwright", return_value=mock_ctx):
+        await scraper.scrape(ScrapeRequest(url="https://spa.example.com", wait_for_selector=".loaded"))
 
     mock_page.wait_for_selector.assert_called_once_with(".loaded", timeout=15_000)
 
@@ -108,14 +106,10 @@ async def test_scrape_with_wait_for_selector(scraper):
 async def test_scrape_takes_screenshot(scraper):
     """take_screenshot=True should call page.screenshot and include base64 in result."""
     html = "<html><body>Screenshot Test</body></html>"
-    mock_ctx, mock_page, _ = _make_playwright_mocks(
-        html_content=html, title="SS Page", final_url="https://example.com"
-    )
+    mock_ctx, mock_page, _ = _make_playwright_mocks(html_content=html, title="SS Page", final_url="https://example.com")
 
-    with patch("searchops.scraping.brightdata_browser.async_playwright", return_value=mock_ctx):
-        result = await scraper.scrape(
-            ScrapeRequest(url="https://example.com", take_screenshot=True)
-        )
+    with patch("playwright.async_api.async_playwright", return_value=mock_ctx):
+        result = await scraper.scrape(ScrapeRequest(url="https://example.com", take_screenshot=True))
 
     mock_page.screenshot.assert_called_once()
     assert result.screenshot_base64 is not None
@@ -126,15 +120,13 @@ async def test_scrape_takes_screenshot(scraper):
 async def test_scrape_exception_returns_500(scraper):
     """Playwright CDP exceptions should be caught and returned as status 500."""
     mock_p = AsyncMock()
-    mock_p.chromium.connect_over_cdp = AsyncMock(
-        side_effect=Exception("CDP WebSocket connection failed")
-    )
+    mock_p.chromium.connect_over_cdp = AsyncMock(side_effect=Exception("CDP WebSocket connection failed"))
 
     mock_ctx = AsyncMock()
     mock_ctx.__aenter__ = AsyncMock(return_value=mock_p)
     mock_ctx.__aexit__ = AsyncMock(return_value=False)
 
-    with patch("searchops.scraping.brightdata_browser.async_playwright", return_value=mock_ctx):
+    with patch("playwright.async_api.async_playwright", return_value=mock_ctx):
         result = await scraper.scrape(ScrapeRequest(url="https://example.com"))
 
     assert result.status_code == 500
@@ -164,18 +156,19 @@ def test_constructor_raises_without_credentials():
 
 
 def test_cdp_url_construction():
-    """CDP WebSocket URL should be correctly built from credentials."""
-    cfg = _make_mock_cfg(
+    """CDP WebSocket URL should be correctly built via build_browser_cdp_url."""
+    from searchops.scraping.bd_auth import build_browser_cdp_url
+
+    cdp_url = build_browser_cdp_url(
         customer_id="brd-customer-xyz789",
-        zone_password="s3cr3t",
-        zone_scraping_browser="scraping_browser",
+        zone="scraping_browser",
+        password="s3cr3t",
     )
-    s = BrightDataBrowserScraper(cfg)
-    assert "brd-customer-xyz789" in s._cdp_url
-    assert "scraping_browser" in s._cdp_url
-    assert "s3cr3t" in s._cdp_url
-    assert "brd.superproxy.io:9222" in s._cdp_url
-    assert s._cdp_url.startswith("wss://")
+    assert "brd-customer-xyz789" in cdp_url
+    assert "scraping_browser" in cdp_url
+    assert "s3cr3t" in cdp_url
+    assert "brd.superproxy.io:9222" in cdp_url
+    assert cdp_url.startswith("wss://")
 
 
 @pytest.mark.asyncio
@@ -190,7 +183,7 @@ async def test_health_check_success(scraper):
     mock_ctx.__aenter__ = AsyncMock(return_value=mock_p)
     mock_ctx.__aexit__ = AsyncMock(return_value=False)
 
-    with patch("searchops.scraping.brightdata_browser.async_playwright", return_value=mock_ctx):
+    with patch("playwright.async_api.async_playwright", return_value=mock_ctx):
         result = await scraper.health_check()
 
     assert result is True
@@ -205,7 +198,7 @@ async def test_health_check_failure(scraper):
     mock_ctx.__aenter__ = AsyncMock(return_value=mock_p)
     mock_ctx.__aexit__ = AsyncMock(return_value=False)
 
-    with patch("searchops.scraping.brightdata_browser.async_playwright", return_value=mock_ctx):
+    with patch("playwright.async_api.async_playwright", return_value=mock_ctx):
         result = await scraper.health_check()
 
     assert result is False

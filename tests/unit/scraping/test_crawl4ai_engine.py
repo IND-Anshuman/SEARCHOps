@@ -15,20 +15,19 @@ import pytest
 
 from searchops.core.interfaces.scraper import ScrapeMode, ScrapeRequest, ScrapeResult
 from searchops.scraping.crawl4ai_engine import (
-    Crawl4AIConfig,
-    Crawl4AIScraper,
-    _DEFAULT_MAX_CONCURRENCY,
     _ENTROPY_THRESHOLD,
     _WORD_COUNT_MIN,
+    Crawl4AIConfig,
+    Crawl4AIScraper,
     build_crawl4ai_scraper,
     close_crawl4ai_scraper,
     get_crawl4ai_scraper,
 )
 
-
 # ---------------------------------------------------------------------------
 # Helpers
 # ---------------------------------------------------------------------------
+
 
 def _make_crawl_result(
     *,
@@ -88,9 +87,9 @@ def _patches():
 # TestCrawl4AIConfig
 # ---------------------------------------------------------------------------
 
+
 @pytest.mark.unit
 class TestCrawl4AIConfig:
-
     def test_defaults_are_valid(self) -> None:
         cfg = Crawl4AIConfig()
         assert cfg.headless is True
@@ -123,9 +122,9 @@ class TestCrawl4AIConfig:
 # TestLifecycle
 # ---------------------------------------------------------------------------
 
+
 @pytest.mark.unit
 class TestCrawl4AIScraperLifecycle:
-
     @pytest.mark.asyncio
     async def test_crawler_none_before_first_use(self) -> None:
         assert Crawl4AIScraper()._crawler is None
@@ -183,13 +182,17 @@ class TestCrawl4AIScraperLifecycle:
 # TestScrape
 # ---------------------------------------------------------------------------
 
+
 @pytest.mark.unit
 class TestCrawl4AIScraperScrape:
-
     @pytest.mark.asyncio
     async def test_success_returns_200(self) -> None:
         scraper = Crawl4AIScraper()
-        mock_crawler = _make_mock_crawler(_make_crawl_result(fit_markdown="# Hello"))
+        mock_crawler = _make_mock_crawler(
+            _make_crawl_result(
+                fit_markdown="# Hello\n\nVector databases store embeddings and support approximate nearest neighbour search, forming the retrieval backbone of modern RAG systems."
+            )
+        )
 
         with patch("searchops.scraping.crawl4ai_engine.AsyncWebCrawler", return_value=mock_crawler):
             with patch("searchops.scraping.crawl4ai_engine.BrowserConfig"):
@@ -283,7 +286,10 @@ class TestCrawl4AIScraperScrape:
 
     @pytest.mark.asyncio
     async def test_metadata_contains_fit_markdown_len(self) -> None:
-        content = "word " * 100
+        content = (
+            "word Vector databases store embeddings and support approximate nearest neighbour search, forming the retrieval backbone of modern RAG systems."
+            * 100
+        )
         scraper = Crawl4AIScraper()
         mock_crawler = _make_mock_crawler(_make_crawl_result(fit_markdown=content))
 
@@ -299,7 +305,11 @@ class TestCrawl4AIScraperScrape:
     @pytest.mark.asyncio
     async def test_word_count_is_populated(self) -> None:
         scraper = Crawl4AIScraper()
-        mock_crawler = _make_mock_crawler(_make_crawl_result(fit_markdown="one two three"))
+        mock_crawler = _make_mock_crawler(
+            _make_crawl_result(
+                fit_markdown="Vector databases store embeddings and support approximate nearest neighbour search, forming the retrieval backbone of modern RAG systems."
+            )
+        )
 
         with patch("searchops.scraping.crawl4ai_engine.AsyncWebCrawler", return_value=mock_crawler):
             with patch("searchops.scraping.crawl4ai_engine.BrowserConfig"):
@@ -308,7 +318,7 @@ class TestCrawl4AIScraperScrape:
                         with patch("searchops.scraping.crawl4ai_engine.CacheMode"):
                             result = await scraper.scrape(ScrapeRequest(url="https://example.com"))
 
-        assert result.word_count == 3
+        assert result.word_count == 18
 
     @pytest.mark.asyncio
     async def test_duration_ms_is_non_negative(self) -> None:
@@ -329,9 +339,9 @@ class TestCrawl4AIScraperScrape:
 # TestLinkExtraction
 # ---------------------------------------------------------------------------
 
+
 @pytest.mark.unit
 class TestCrawl4AILinkExtraction:
-
     @pytest.mark.asyncio
     async def test_dict_links_extracted_as_hrefs(self) -> None:
         scraper = Crawl4AIScraper()
@@ -395,17 +405,15 @@ class TestCrawl4AILinkExtraction:
 # TestScrapeMany
 # ---------------------------------------------------------------------------
 
+
 @pytest.mark.unit
 class TestCrawl4AIScraperScrapeMany:
-
     @pytest.mark.asyncio
     async def test_returns_correct_count(self) -> None:
         scraper = Crawl4AIScraper()
         ok = ScrapeResult(url="u", final_url="u", status_code=200, scrape_mode_used=ScrapeMode.CRAWL4AI)
         with patch.object(scraper, "scrape", AsyncMock(return_value=ok)):
-            results = await scraper.scrape_many(
-                [ScrapeRequest(url=f"https://x.com/{i}") for i in range(6)]
-            )
+            results = await scraper.scrape_many([ScrapeRequest(url=f"https://x.com/{i}") for i in range(6)])
         assert len(results) == 6
 
     @pytest.mark.asyncio
@@ -420,7 +428,12 @@ class TestCrawl4AIScraperScrapeMany:
             peak = max(peak, current)
             await asyncio.sleep(0.01)
             current -= 1
-            return ScrapeResult(url=req.url, final_url=req.url, status_code=200, scrape_mode_used=ScrapeMode.CRAWL4AI)
+            return ScrapeResult(
+                url=req.url,
+                final_url=req.url,
+                status_code=200,
+                scrape_mode_used=ScrapeMode.CRAWL4AI,
+            )
 
         with patch.object(scraper, "scrape", side_effect=_count):
             await scraper.scrape_many(
@@ -435,9 +448,9 @@ class TestCrawl4AIScraperScrapeMany:
 # TestHealthCheck
 # ---------------------------------------------------------------------------
 
+
 @pytest.mark.unit
 class TestCrawl4AIHealthCheck:
-
     @pytest.mark.asyncio
     async def test_returns_true_when_crawl4ai_importable(self) -> None:
         assert await Crawl4AIScraper().health_check() is True
@@ -452,9 +465,9 @@ class TestCrawl4AIHealthCheck:
 # TestFactory
 # ---------------------------------------------------------------------------
 
+
 @pytest.mark.unit
 class TestBuildCrawl4AIScraper:
-
     def test_returns_scraper_instance(self) -> None:
         assert isinstance(build_crawl4ai_scraper(), Crawl4AIScraper)
 
@@ -473,12 +486,13 @@ class TestBuildCrawl4AIScraper:
 # TestSingletons
 # ---------------------------------------------------------------------------
 
+
 @pytest.mark.unit
 class TestSingletonHelpers:
-
     @pytest.mark.asyncio
     async def test_get_returns_same_instance(self) -> None:
         import searchops.scraping.crawl4ai_engine as mod
+
         mod._shared_scraper = None
         with patch.object(Crawl4AIScraper, "start", AsyncMock()):
             s1 = await get_crawl4ai_scraper()
@@ -489,6 +503,7 @@ class TestSingletonHelpers:
     @pytest.mark.asyncio
     async def test_close_resets_singleton(self) -> None:
         import searchops.scraping.crawl4ai_engine as mod
+
         mod._shared_scraper = None
         with patch.object(Crawl4AIScraper, "start", AsyncMock()):
             await get_crawl4ai_scraper()
@@ -502,18 +517,39 @@ class TestSingletonHelpers:
 # TestPipelineIntegration
 # ---------------------------------------------------------------------------
 
+
 @pytest.mark.unit
 class TestScrapingPipelineCrawl4AITier:
     """Verify Crawl4AI is Tier 0.5 in the pipeline execution order."""
 
+    @staticmethod
+    def _flags():
+        from searchops.feature_flags.manager import FeatureFlagManager
+        from searchops.feature_flags.providers import InMemoryFeatureFlagProvider
+
+        provider = InMemoryFeatureFlagProvider(
+            {
+                "crawl4ai_enabled": True,
+                "playwright_enabled": True,
+                "firecrawl_enabled": True,
+                "rate_limiting_enabled": False,
+            }
+        )
+        return FeatureFlagManager(providers=[provider])
+
     def _make_pipeline(self, *, stealth_ok=False, crawl4ai_ok=True, playwright_ok=True):
         from unittest.mock import MagicMock
+
         from searchops.scraping.pipeline import ScrapingPipeline
 
         def _r(status, mode):
             return ScrapeResult(
-                url="https://example.com", final_url="https://example.com",
-                status_code=status, html="<h1>ok</h1>" if status == 200 else None,
+                url="https://example.com",
+                final_url="https://example.com",
+                status_code=status,
+                html="<h1>ok</h1><p>Vector databases store embeddings and support approximate nearest neighbour search, forming the retrieval backbone of modern RAG systems.</p>"
+                if status == 200
+                else None,
                 scrape_mode_used=mode,
             )
 
@@ -532,12 +568,19 @@ class TestScrapingPipelineCrawl4AITier:
         fc = AsyncMock()
         fc.scrape.return_value = _r(200, ScrapeMode.FIRECRAWL)
 
-        pipeline = ScrapingPipeline(stealth=stealth, proxy_router=None, crawl4ai=c4ai, firecrawl=fc, playwright=pw)
+        pipeline = ScrapingPipeline(
+            stealth=stealth,
+            proxy_router=None,
+            crawl4ai=c4ai,
+            firecrawl=fc,
+            playwright=pw,
+            feature_flags=self._flags(),
+        )
         return pipeline, stealth, c4ai, pw, fc
 
     @pytest.mark.asyncio
     async def test_crawl4ai_called_when_stealth_fails(self) -> None:
-        pipeline, stealth, c4ai, pw, fc = self._make_pipeline(stealth_ok=False, crawl4ai_ok=True)
+        pipeline, _stealth, c4ai, pw, _fc = self._make_pipeline(stealth_ok=False, crawl4ai_ok=True)
         req = ScrapeRequest(url="https://example.com")
         result = await pipeline.execute(req)
         assert result.status_code == 200
@@ -547,10 +590,13 @@ class TestScrapingPipelineCrawl4AITier:
 
     @pytest.mark.asyncio
     async def test_stealth_success_skips_crawl4ai(self) -> None:
-        pipeline, stealth, c4ai, pw, fc = self._make_pipeline(stealth_ok=True)
+        pipeline, stealth, c4ai, _pw, _fc = self._make_pipeline(stealth_ok=True)
         stealth.scrape.return_value = ScrapeResult(
-            url="https://example.com", final_url="https://example.com",
-            status_code=200, html="<h1>stealth</h1>", scrape_mode_used=ScrapeMode.STEALTH_HTTP,
+            url="https://example.com",
+            final_url="https://example.com",
+            status_code=200,
+            html="<h1>stealth</h1><p>Vector databases store embeddings and support approximate nearest neighbour search, forming the retrieval backbone of modern RAG systems.</p>",
+            scrape_mode_used=ScrapeMode.STEALTH_HTTP,
         )
         await pipeline.execute(ScrapeRequest(url="https://example.com"))
         c4ai.scrape.assert_not_called()

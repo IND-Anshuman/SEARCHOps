@@ -4,12 +4,13 @@ Unit tests for scraping cache, transport, and DLQ components.
 
 from __future__ import annotations
 
-import pytest
 from unittest.mock import AsyncMock
+
+import pytest
 
 from searchops.scraping.cache import ContentHashCache
 from searchops.scraping.dlq import ScrapeDLQManager
-from searchops.scraping.transport import get_transport_pool, close_transport_pool
+from searchops.scraping.transport import close_transport_pool, get_transport_pool
 
 
 @pytest.mark.unit
@@ -40,4 +41,3 @@ async def test_transport_pool_full():
     pool = get_transport_pool()
     assert pool is not None
     await close_transport_pool()
-

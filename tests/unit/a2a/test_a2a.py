@@ -13,7 +13,6 @@ from searchops.a2a.protocol.envelopes import (
     A2AMessageEnvelope,
     A2AMessageType,
     AgentHandshakeRequest,
-    JsonRpcRequest,
 )
 from searchops.a2a.router.router import A2AMessageRouter
 from searchops.a2a.transports.http import IA2ATransport

@@ -17,10 +17,10 @@ from searchops.scraping.deduplicator import MinHashDeduplicator, build_deduplica
 from searchops.scraping.schema_extractor import SchemaConstraintEngine, build_schema_engine
 from searchops.scraping.vision_extractor import VisionIngestionEngine, build_vision_engine
 
-
 # ---------------------------------------------------------------------------
 # Test Schemas for Phase 5
 # ---------------------------------------------------------------------------
+
 
 class UserProfile(BaseModel):
     name: str
@@ -32,9 +32,9 @@ class UserProfile(BaseModel):
 # TestPhase5_SchemaConstraintEngine
 # ---------------------------------------------------------------------------
 
+
 @pytest.mark.unit
 class TestSchemaConstraintEngine:
-
     def test_get_json_schema(self) -> None:
         engine = SchemaConstraintEngine()
         schema = engine.get_json_schema(UserProfile)
@@ -85,9 +85,9 @@ class TestSchemaConstraintEngine:
 # TestPhase6_MinHashDeduplicator
 # ---------------------------------------------------------------------------
 
+
 @pytest.mark.unit
 class TestMinHashDeduplicator:
-
     def test_create_shingles(self) -> None:
         dedup = MinHashDeduplicator(shingle_n=3)
         text = "The quick brown fox jumps over the lazy dog"
@@ -118,15 +118,14 @@ class TestMinHashDeduplicator:
         sim = dedup.jaccard_similarity(t1, t2)
         assert 0.4 <= sim <= 1.0
 
-
     def test_clear_index(self) -> None:
         dedup = MinHashDeduplicator(threshold=0.5)
         dedup.index_document("d1", "Test content string for indexing.")
-        is_dup, matches = dedup.is_duplicate("Test content string for indexing.")
+        is_dup, _matches = dedup.is_duplicate("Test content string for indexing.")
         assert is_dup is True
 
         dedup.clear()
-        is_dup_after, matches_after = dedup.is_duplicate("Test content string for indexing.")
+        is_dup_after, _matches_after = dedup.is_duplicate("Test content string for indexing.")
         assert is_dup_after is False
 
     def test_factory_helper(self) -> None:
@@ -139,9 +138,9 @@ class TestMinHashDeduplicator:
 # TestPhase7_VisionIngestionEngine
 # ---------------------------------------------------------------------------
 
+
 @pytest.mark.unit
 class TestVisionIngestionEngine:
-
     def test_build_vision_prompt(self) -> None:
         engine = VisionIngestionEngine(api_key="test-key")
         prompt = engine.build_vision_prompt(page_number=2)
@@ -163,13 +162,7 @@ class TestVisionIngestionEngine:
         mock_resp.status_code = 200
         mock_resp.json.return_value = {
             "candidates": [
-                {
-                    "content": {
-                        "parts": [
-                            {"text": "# Transcribed Heading\n\n| Col1 | Col2 |\n|---|---|\n| A | B |"}
-                        ]
-                    }
-                }
+                {"content": {"parts": [{"text": "# Transcribed Heading\n\n| Col1 | Col2 |\n|---|---|\n| A | B |"}]}}
             ]
         }
 
@@ -206,4 +199,3 @@ class TestVisionIngestionEngine:
         engine = build_vision_engine(api_key="key")
         assert isinstance(engine, VisionIngestionEngine)
         assert engine.api_key == "key"
-
