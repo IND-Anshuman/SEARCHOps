@@ -73,15 +73,18 @@ def test_evidence_store_roundtrip():
 
 
 @pytest.mark.unit
-def test_dedupe_claims_keeps_first_by_id():
-    """dedupe_claims merges lists and drops later duplicates by id."""
+def test_dedupe_claims_latest_version_wins_in_first_order():
+    """dedupe_claims keeps first-appearance order but the latest version of a claim.
+
+    The verifier returns updated copies of existing claims; a first-wins merge
+    discarded every verdict, so claims could never leave ``unverified``.
+    """
     c1 = Claim(id="c1", text="first")
-    c1_dup = Claim(id="c1", text="second")
+    c1_verified = c1.model_copy(update={"status": "supported"})
     c2 = Claim(id="c2", text="third")
-    result = dedupe_claims([c1], [c1_dup, c2])
+    result = dedupe_claims([c1, c2], [c1_verified])
     assert [x.id for x in result] == ["c1", "c2"]
-    # First occurrence wins: text must stay "first", not be overwritten by "second"
-    assert result[0].text == "first"
+    assert result[0].status == "supported"
 
 
 @pytest.mark.unit

@@ -4,26 +4,27 @@ Unit tests for LangGraph orchestration: state, nodes, and graph compilation.
 
 from __future__ import annotations
 
-from typing import Any
-from unittest.mock import AsyncMock, patch
+from typing import TYPE_CHECKING
+from unittest.mock import AsyncMock
 
 import pytest
 
 from searchops.core.interfaces.scraper import ScrapeMode, ScrapeResult
-from searchops.knowledge.domain.entity import KGEntity, KGRelation
 from searchops.orchestration.graphs.deep_research import build_deep_research_graph
-from searchops.orchestration.nodes.extract_knowledge import extract_knowledge_node
+from searchops.orchestration.nodes.extract_evidence import extract_evidence_node
 from searchops.orchestration.nodes.planner import planner_node
 from searchops.orchestration.nodes.report_writer import report_writer_node
 from searchops.orchestration.nodes.scrape import scrape_node
 from searchops.orchestration.nodes.search import search_node
-from searchops.orchestration.states.research_state import ResearchState
 from searchops.scraping.pipeline import ScrapingPipeline
 from searchops.search.aggregator import FederatedSearchAggregator
 from searchops.search.contracts import SearchResultItem
 
+if TYPE_CHECKING:
+    from searchops.orchestration.states.research_state import ResearchState
 
 # ── Graph compilation ─────────────────────────────────────────────────────────
+
 
 @pytest.mark.unit
 def test_deep_research_graph_compiles():
@@ -44,6 +45,7 @@ def test_deep_research_graph_compiles():
 
 # ── Individual node tests ──────────────────────────────────────────────────────
 
+
 @pytest.mark.unit
 @pytest.mark.asyncio
 async def test_planner_node():
@@ -58,9 +60,12 @@ async def test_planner_node():
 
     assert result["iteration"] == 0
     assert result["plan"].primary_query == "quantum computing"
-    assert len(result["plan"].sub_queries) == 3
-    assert result["plan"].sub_queries[0] == "What are the core concepts of quantum computing?"
-    assert result["budget"].remaining_searches == 4
+    # The question itself is always searched, followed by the decomposition.
+    assert len(result["plan"].sub_queries) == 4
+    assert result["plan"].sub_queries[0] == "quantum computing"
+    assert result["plan"].sub_queries[1] == "What are the core concepts of quantum computing?"
+    assert result["pending_queries"] == result["plan"].sub_queries
+    assert result["budget"].remaining_searches == 5  # one per sub-query, plus one
     mock_llm.generate.assert_called_once()
 
 
@@ -92,8 +97,20 @@ async def test_ranker_node():
     from searchops.orchestration.nodes.ranker import ranker_node
 
     items = [
-        SearchResultItem(title="Q1", url="https://example.com/q1?utm_source=test", snippet="s1", provider="p1", score=0.8),
-        SearchResultItem(title="Q1 Dup", url="https://example.com/q1/", snippet="s1 dup", provider="p2", score=0.9),
+        SearchResultItem(
+            title="Q1",
+            url="https://example.com/q1?utm_source=test",
+            snippet="s1",
+            provider="p1",
+            score=0.8,
+        ),
+        SearchResultItem(
+            title="Q1 Dup",
+            url="https://example.com/q1/",
+            snippet="s1 dup",
+            provider="p2",
+            score=0.9,
+        ),
         SearchResultItem(title="Q2", url="https://example.com/q2", snippet="s2", provider="p1", score=0.7),
     ]
     state: ResearchState = {"search_results": items, "max_sources": 5}
@@ -110,15 +127,17 @@ async def test_state_pruner_node():
 
     state: ResearchState = {
         "scraped_contents": [
-            {"url": "https://example.com", "title": "T1", "content": "VERY LONG RAW HTML TEXT BLOBS"}
+            {
+                "url": "https://example.com",
+                "title": "T1",
+                "content": "VERY LONG RAW HTML TEXT BLOBS",
+            }
         ]
     }
     result = await state_pruner_node(state)
 
     assert result["scraped_contents"][0]["content"] == ""
     assert result["scraped_contents"][0]["url"] == "https://example.com"
-
-
 
 
 @pytest.mark.unit
@@ -144,25 +163,21 @@ async def test_scrape_node():
 
 @pytest.mark.unit
 @pytest.mark.asyncio
-async def test_extract_knowledge_node():
-    mock_extractor = AsyncMock()
-    e1 = KGEntity(name="Qubit", entity_type="Concept", description="Quantum bit")
-    r1 = KGRelation(
-        source_id=e1.id,
-        target_id=e1.id,
-        relation_type="PART_OF",
-        description="Building block",
-    )
-    mock_extractor.extract.return_value = ([e1], [r1])
+async def test_extract_evidence_node():
+    mock_llm = AsyncMock()
+    mock_llm.generate.return_value = '{"claims": [{"text": "Qubits are quantum bits", "confidence": 0.9, "citations": [{"url": "https://example.com", "title": "Q Intro"}]}], "entities": [{"name": "Qubit", "type": "Concept", "description": "Quantum bit"}], "relations": []}'
 
-    state: ResearchState = {
-        "scraped_contents": [{"url": "u1", "content": "Qubits are key.", "title": ""}]
-    }
-    result = await extract_knowledge_node(state, extractor=mock_extractor)
+    page = "Qubits are quantum bits, the basic unit of information in a quantum computer."
+    state: ResearchState = {"round_documents": [{"url": "https://example.com", "content": page, "title": "Q Intro"}]}
+    result = await extract_evidence_node(state, llm_router=mock_llm)
 
+    assert len(result["evidence_claims"]) == 1
+    citation = result["evidence_claims"][0].citations[0]
+    assert citation.url == "https://example.com" and citation.quote_verified
+    assert result["passages"] and result["round_documents"] == []
     assert len(result["entities"]) == 1
-    assert len(result["relations"]) == 1
     assert result["entities"][0].name == "Qubit"
+    assert result["evidence_claims"][0].text == "Qubits are quantum bits"
 
 
 @pytest.mark.unit
@@ -173,9 +188,7 @@ async def test_report_writer_node():
 
     state: ResearchState = {
         "query": "quantum computing",
-        "scraped_contents": [
-            {"url": "https://example.com", "title": "Q Intro", "content": "Qubits..."}
-        ],
+        "scraped_contents": [{"url": "https://example.com", "title": "Q Intro", "content": "Qubits..."}],
         "entities": [],
     }
     result = await report_writer_node(state, llm_router=mock_llm)
