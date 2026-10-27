@@ -1,0 +1,103 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+jobs:
+  backend:
+    runs-on: ubuntu-latest
+    # A few unit tests exercise the real Redis client (the bootstrap path and
+    # the shared scrape deduplicator), as the app does in production.
+    services:
+      redis:
+        image: redis:7-alpine
+        ports:
+          - 6379:6379
+        options: >-
+          --health-cmd "redis-cli ping"
+          --health-interval 5s
+          --health-timeout 3s
+          --health-retries 10
+    env:
+      REDIS_HOST: localhost
+      REDIS_PORT: "6379"
+    steps:
+      - uses: actions/checkout@v4
+      - uses: astral-sh/setup-uv@v5
+        with:
+          enable-cache: true
+      - run: uv sync --frozen
+      - name: Lint
+        run: uv run ruff check src tests
+      - name: Format
+        run: uv run ruff format --check src tests
+      - name: Types
+        run: uv run mypy src/searchops
+      - name: Unit tests
+        run: uv run pytest tests/unit -q
+
+  frontend:
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: frontend
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: frontend/package-lock.json
+      - run: npm ci
+      - name: Dependency audit (production deps)
+        run: npm audit --omit=dev --audit-level=high
+      - name: Typecheck and build
+        run: npm run build
+        env:
+          # Public by design; a placeholder is enough to compile.
+          VITE_CLERK_PUBLISHABLE_KEY: pk_test_Y2hhcm1pbmctaG91bmQtOTY2Mi5jbGVyay5hY2NvdW50cy5kZXYk
+          VITE_API_BASE_URL: ""
+
+  image:
+    runs-on: ubuntu-latest
+    needs: [backend, frontend]
+    steps:
+      - uses: actions/checkout@v4
+      - name: Build image
+        run: >
+          docker build -t searchops:ci
+          --build-arg VITE_CLERK_PUBLISHABLE_KEY=pk_test_Y2hhcm1pbmctaG91bmQtOTY2Mi5jbGVyay5hY2NvdW50cy5kZXYk .
+      - name: Refuses to start without authentication
+        run: |
+          set +e
+          out=$(docker run --rm -e APP_ENV=production -e CLERK_PUBLISHABLE_KEY= -e SEARCHOPS_API_KEY= \
+            searchops:ci python -c "from searchops.api.main import create_app; create_app()" 2>&1)
+          echo "$out" | tail -3
+          echo "$out" | grep -q "No authentication is configured"
+      - name: Every module imports inside the image
+        # Catches a package that is installed in dev (often transitively) but
+        # missing from the production dependencies: the image builds, then the
+        # API dies on import. python-pptx / python-docx shipped this way once.
+        run: |
+          docker run --rm --entrypoint python searchops:ci -c "
+          import importlib, pkgutil, searchops, sys
+          missing = {}
+          for m in pkgutil.walk_packages(searchops.__path__, 'searchops.'):
+              try:
+                  importlib.import_module(m.name)
+              except ModuleNotFoundError as e:
+                  missing.setdefault(e.name, m.name)
+              except Exception:
+                  pass  # config-dependent start-up checks, not missing code
+          print(missing or 'all modules import')
+          sys.exit(1 if missing else 0)
+          "

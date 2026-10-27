@@ -46,7 +46,7 @@ test: ## Run all tests
 	$(PYTEST)
 
 test-unit: ## Run only unit tests (no infrastructure required)
-	$(PYTEST) -m unit --no-cov
+	$(PYTEST) tests/unit
 
 test-integration: ## Run integration tests (requires running infrastructure)
 	$(PYTEST) -m integration
@@ -84,8 +84,14 @@ db-history: ## Show Alembic migration history
 	$(PYTHON) -m alembic history
 
 # ── Docker ────────────────────────────────────────────────────────────────────
-docker-up: ## Start all infrastructure services
-	docker compose up -d
+docker-up: ## Start redis; ARGS="--profile api|local-tools|full" adds the API, SearXNG, or postgres+qdrant+neo4j
+	docker compose $(ARGS) up -d
+
+docker-api: ## Also start the API container (builds the image)
+	docker compose --profile api up -d --build api
+
+docker-build: ## Build the API image without starting it
+	docker compose --profile api build api
 
 docker-down: ## Stop all infrastructure services
 	docker compose down
@@ -95,6 +101,12 @@ docker-logs: ## Follow logs from all containers
 
 docker-ps: ## Show running containers
 	docker compose ps
+
+docker-config: ## Validate docker-compose.yml without starting anything
+	docker compose config --quiet
+
+docker-nuke: ## Stop services AND delete their volumes (destructive)
+	docker compose down -v
 
 # ── Cleanup ───────────────────────────────────────────────────────────────────
 clean: ## Remove build artifacts and caches
@@ -109,3 +121,6 @@ docs: ## Build documentation
 
 docs-serve: ## Serve documentation locally
 	uv run mkdocs serve
+
+# ── Deployment ────────────────────────────────────────────────────────────────
+ci: check test-unit ## Everything CI runs for the backend

@@ -1,12 +1,19 @@
 # SEARCHOps infrastructure services.
 #
-# Brings up every dependency the platform needs so `make docker-up` is a single
-# command. The application itself runs on the host (see the `api` profile) so
-# that live-reloading and the developer's own toolchain stay in play; only the
-# stateful services are containerised.
+# Brings up what a research run needs so `make docker-up` is a single command:
+# Redis (job state, caches). Search and page text come from Tavily
+# (TOOL_PROFILE=api, the default). The application itself runs on the host (see
+# the `api` profile) so that live-reloading and the developer's own toolchain
+# stay in play.
 #
-#   make docker-up      # start the four data services
-#   make docker-up ARGS="--profile api"   # also start the API container
+# Optional profiles:
+#   local-tools — SearXNG, the key-free search engine for TOOL_PROFILE=local
+#   full        — Postgres, Qdrant, Neo4j (not used by the pipeline yet)
+#
+#   make docker-up      # Redis
+#   make docker-up ARGS="--profile api"           # also the API container
+#   make docker-up ARGS="--profile local-tools"   # also SearXNG
+#   make docker-up ARGS="--profile full"          # also Postgres, Qdrant, Neo4j
 #   make docker-ps
 #   make docker-logs
 #   make docker-down
@@ -18,15 +25,16 @@ name: searchops
 
 services:
   postgres:
+    profiles: ["full"]  # optional: not used by the research pipeline yet
     image: postgres:16-alpine
     container_name: searchops-postgres
     restart: unless-stopped
     environment:
       POSTGRES_USER: searchops
-      POSTGRES_PASSWORD: searchops_dev_pass
+      POSTGRES_PASSWORD: "${POSTGRES_PASSWORD:-searchops_dev_pass}"
       POSTGRES_DB: searchops
     ports:
-      - "5432:5432"
+      - "127.0.0.1:5432:5432"
     volumes:
       - searchops-postgres-data:/var/lib/postgresql/data
     healthcheck:
@@ -42,9 +50,12 @@ services:
     restart: unless-stopped
     # appendonly: the URL seen-set and the scrape cache are correctness-relevant
     # state — losing them on restart makes a crawl re-fetch and re-pay.
-    command: ["redis-server", "--appendonly", "yes", "--maxmemory-policy", "noeviction"]
+    # REDIS_PASSWORD empty = no password (local development only).
+    command: ["redis-server", "--appendonly", "yes", "--maxmemory-policy", "noeviction", "--requirepass", "${REDIS_PASSWORD:-}"]
+    environment:
+      REDISCLI_AUTH: "${REDIS_PASSWORD:-}"
     ports:
-      - "6379:6379"
+      - "127.0.0.1:6379:6379"
     volumes:
       - searchops-redis-data:/data
     healthcheck:
@@ -54,12 +65,13 @@ services:
       retries: 10
 
   qdrant:
+    profiles: ["full"]  # optional: not used by the research pipeline yet
     image: qdrant/qdrant:v1.12.4
     container_name: searchops-qdrant
     restart: unless-stopped
     ports:
-      - "6333:6333"  # REST
-      - "6334:6334"  # gRPC (config sets qdrant_prefer_grpc: true)
+      - "127.0.0.1:6333:6333"  # REST
+      - "127.0.0.1:6334:6334"  # gRPC (config sets qdrant_prefer_grpc: true)
     volumes:
       - searchops-qdrant-data:/qdrant/storage
     environment:
@@ -72,23 +84,25 @@ services:
       start_period: 20s
 
   neo4j:
+    profiles: ["full"]  # optional: not used by the research pipeline yet
     image: neo4j:5.23-community
     container_name: searchops-neo4j
     restart: unless-stopped
     environment:
       # Matches KnowledgeGraphSettings defaults so no .env is required.
-      NEO4J_AUTH: "neo4j/searchops_dev_pass"
+      NEO4J_AUTH: "neo4j/${NEO4J_PASSWORD:-searchops_dev_pass}"
+      NEO4J_PASSWORD: "${NEO4J_PASSWORD:-searchops_dev_pass}"
       NEO4J_server_memory_heap_initial__size: "512m"
       NEO4J_server_memory_heap_max__size: "2G"
       NEO4J_server_memory_pagecache_size: "1G"
     ports:
-      - "7474:7474"  # HTTP browser
-      - "7687:7687"  # Bolt
+      - "127.0.0.1:7474:7474"  # HTTP browser
+      - "127.0.0.1:7687:7687"  # Bolt
     volumes:
       - searchops-neo4j-data:/data
     healthcheck:
       # Cypher-shell is the only reliable readiness probe for Bolt.
-      test: ["CMD-SHELL", "cypher-shell -u neo4j -p searchops_dev_pass 'RETURN 1' || exit 1"]
+      test: ["CMD-SHELL", "cypher-shell -u neo4j -p \"$$NEO4J_PASSWORD\" 'RETURN 1' || exit 1"]
       interval: 15s
       timeout: 10s
       retries: 12
@@ -102,21 +116,26 @@ services:
     build:
       context: .
       dockerfile: Dockerfile
+      args:
+        # Public by design; compiled into the web app. Same value the API verifies tokens with.
+        VITE_CLERK_PUBLISHABLE_KEY: "${CLERK_PUBLISHABLE_KEY:?set CLERK_PUBLISHABLE_KEY in .env}"
+        # api (default): small image, Tavily only. local: adds the free tools + Chromium.
+        TOOL_PROFILE: "${TOOL_PROFILE:-api}"
     container_name: searchops-api
     restart: unless-stopped
+    # Only what a run needs. SearXNG (`local-tools` profile) and Postgres,
+    # Qdrant, Neo4j (`full`) are optional; the API does not wait for them.
     depends_on:
-      postgres:
-        condition: service_healthy
       redis:
         condition: service_healthy
-      qdrant:
-        condition: service_healthy
-      neo4j:
-        condition: service_healthy
-      searxng:
-        condition: service_started
     environment:
-      APP_ENV: development
+      APP_ENV: production
+      TOOL_PROFILE: "${TOOL_PROFILE:-api}"
+      # Trust X-Forwarded-* from the caddy container (it sets the client IP and
+      # https). Safe here because this port is published on loopback only and
+      # only containers on this compose network can reach it; if you set
+      # API_BIND=0.0.0.0, list the proxy's address instead of the "*" default.
+      FORWARDED_ALLOW_IPS: "${FORWARDED_ALLOW_IPS:-*}"
       DATABASE_HOST: postgres
       REDIS_HOST: redis
       QDRANT_HOST: qdrant
@@ -125,14 +144,42 @@ services:
     env_file:
       - path: .env
         required: false
+    # Published on loopback by default; put a TLS-terminating reverse proxy in front.
+    # Set API_BIND=0.0.0.0 only if the container itself is exposed.
     ports:
-      - "8000:8000"
+      - "${API_BIND:-127.0.0.1}:8000:8000"
+    volumes:
+      - searchops-reports:/data/reports
     healthcheck:
-      test: ["CMD-SHELL", "python -c \"import urllib.request,sys; sys.exit(0 if urllib.request.urlopen('http://localhost:8000/health', timeout=5).status == 200 else 1)\""]
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8000/health/live', timeout=4)"]
       interval: 30s
       timeout: 10s
       retries: 5
       start_period: 40s
+
+  # ── HTTPS front door: Caddy, for a VM with your own domain ───────────────
+  # Gets and renews the Let's Encrypt certificate for APP_DOMAIN by itself and
+  # proxies WebSockets without extra configuration. Needs DNS for APP_DOMAIN
+  # pointing at this machine and ports 80/443 open. Enable with
+  # COMPOSE_PROFILES=api,proxy in .env (see docs/DEPLOYMENT.md).
+  caddy:
+    profiles: ["proxy"]
+    image: caddy:2-alpine
+    container_name: searchops-caddy
+    restart: unless-stopped
+    depends_on:
+      api:
+        condition: service_healthy
+    environment:
+      APP_DOMAIN: "${APP_DOMAIN:?set APP_DOMAIN in .env, e.g. app.example.com}"
+    ports:
+      - "80:80"
+      - "443:443"
+      - "443:443/udp" # HTTP/3
+    volumes:
+      - ./deploy/Caddyfile:/etc/caddy/Caddyfile:ro
+      - searchops-caddy-data:/data # the certificates: keep, or every restart re-issues them
+      - searchops-caddy-config:/config
 
   # ── Key-free search: self-hosted SearXNG ────────────────────────────────
   # The primary no-API-key search path. Aggregates many upstream engines, so
@@ -140,16 +187,21 @@ services:
   # enabled in settings.yml so the app can call format=json (public instances
   # wall this behind a browser check; self-hosted does not).
   searxng:
-    image: searxng/searxng:latest
+    profiles: ["local-tools"]  # only for TOOL_PROFILE=local
+    # Pinned by digest: `latest` changes under you, and SearXNG's engine
+    # parsers change often. Update deliberately: docker pull, then replace this.
+    image: searxng/searxng@sha256:9b61996edcc679fb6665290f95fda15389a14eda6060e41a25c63ab2758f2436
     container_name: searchops-searxng
     restart: unless-stopped
     ports:
-      - "8080:8080"
+      - "127.0.0.1:8080:8080"
     volumes:
       # settings.yml enables format=json and disables the limiter.
       - ./config/searxng:/etc/searxng
     environment:
       SEARXNG_BASE_URL: "http://localhost:8080/"
+      # Overrides server.secret_key in settings.yml (a public dev value).
+      SEARXNG_SECRET: "${SEARXNG_SECRET:-searchops_dev_searxng_key}"
     cap_drop:
       - ALL
     cap_add:
@@ -162,3 +214,6 @@ volumes:
   searchops-redis-data:
   searchops-qdrant-data:
   searchops-neo4j-data:
+  searchops-reports:
+  searchops-caddy-data:
+  searchops-caddy-config:

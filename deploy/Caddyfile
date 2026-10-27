@@ -1,0 +1,10 @@
+# Caddy in front of the API container (docker-compose.yml, `proxy` profile).
+#
+# A site address that is a real host name makes Caddy obtain and renew a
+# Let's Encrypt certificate and redirect HTTP to HTTPS. reverse_proxy passes
+# WebSocket upgrades through (the live-progress socket) without any extra
+# configuration, and sets X-Forwarded-For / -Proto / -Host, which the API reads.
+{$APP_DOMAIN} {
+	encode zstd gzip
+	reverse_proxy api:8000
+}

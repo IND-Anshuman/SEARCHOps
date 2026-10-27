@@ -1,0 +1,52 @@
+# Keep the build context small and avoid leaking secrets into an image layer.
+# The Dockerfile copies the whole tree, so anything listed here is excluded.
+
+# Version control
+.git
+.gitignore
+.gitattributes
+
+# Python artefacts
+__pycache__/
+*.py[cod]
+*.egg-info/
+.venv/
+venv/
+build/
+dist/
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+.coverage
+.coverage.*
+coverage.xml
+htmlcov/
+
+# Node / frontend (the API image does not serve the frontend)
+node_modules/
+frontend/node_modules/
+frontend/dist/
+npm-debug.log*
+
+# Secrets and local config — never bake these into an image
+.env
+.env.*
+*.pem
+*.key
+
+# Docs and tooling not needed at runtime
+docs/
+.hermes/
+.github/
+tests/
+htmlcov/
+
+# Editors and OS noise
+.vscode/
+.idea/
+.DS_Store
+Thumbs.db
+
+# Logs
+*.log
+uvicorn_*.log
