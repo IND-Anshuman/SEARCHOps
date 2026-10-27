@@ -116,3 +116,43 @@ def dedupe_semantically(
     if return_merged:
         return survivors, merged_ids
     return survivors
+
+
+_FIGURE_RE = re.compile(r"\d+(?:[.,]\d+)?")
+_STATUS_RANK = {"supported": 0, "unverified": 1, "contested": 2, "refuted": 3}
+# A claim this short is too generic to call contained ("Milvus is fast").
+_MIN_CONTAINED_WORDS = 4
+
+
+def absorb_contained(claims: list[Claim]) -> list[Claim]:
+    """Fold a claim into a longer one that already states all of it.
+
+    "Milvus is licensed under Apache 2.0" adds nothing next to "Milvus and
+    Qdrant are both released under Apache 2.0, which permits commercial use";
+    kept apart, the report states the licence twice. A claim is absorbed only
+    when every content word and every figure recurs in the other claim and the
+    other claim is verified at least as strongly, so nothing is lost. The
+    absorbing claim inherits the citations. Report stage only: verification
+    still sees every claim.
+    """
+    sigs = [_signature(c.text) for c in claims]
+    figs = [frozenset(_FIGURE_RE.findall(c.text)) for c in claims]
+    rank = [_STATUS_RANK.get(c.status, 1) for c in claims]
+    absorbed_into: dict[int, int] = {}
+    for i, small in enumerate(sigs):
+        if len(small) < _MIN_CONTAINED_WORDS:
+            continue
+        for j, big in enumerate(sigs):
+            if i == j or j in absorbed_into or len(big) <= len(small):
+                continue
+            if small <= big and figs[i] <= figs[j] and rank[j] <= rank[i]:
+                absorbed_into[i] = j
+                break
+    out: dict[int, Claim] = {j: c for j, c in enumerate(claims) if j not in absorbed_into}
+    for i, j in absorbed_into.items():
+        while j in absorbed_into:  # the absorber was itself absorbed later
+            j = absorbed_into[j]
+        merged = _merge(out[j], claims[i])
+        urls = list(dict.fromkeys([*merged.supporting_urls, *claims[i].supporting_urls]))
+        out[j] = merged.model_copy(update={"supporting_urls": urls})
+    return [out[k] for k in sorted(out)]

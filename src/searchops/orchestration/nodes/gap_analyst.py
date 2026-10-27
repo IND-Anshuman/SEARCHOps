@@ -10,7 +10,7 @@ re-runs on the next transition, but now armed with both the original query
 
 This is deliberately cheap (string ops only) so the control-layer overhead of
 a re-plan cycle is sub-millisecond, keeping almost all token budget inside
-the actual LLM nodes (search / extract_claims / critic).
+the actual LLM nodes (search / extract_evidence / critic).
 """
 
 from __future__ import annotations
@@ -54,9 +54,10 @@ async def gap_analyst_node(state: ResearchState) -> ResearchState:
         log.info("Gap analyst: no gaps, nothing to expand")
         return {}
 
-    prior_queries = list(plan.sub_queries if plan else [])
+    prior_queries = list(plan.sub_queries if plan else []) + list(state.get("searched_queries", []) or [])
     new_queries: list[str] = []
-    for gap in sorted(gaps, key=lambda g: g.priority, reverse=True)[:_MAX_NEW_QUERIES]:
+    # Priority 1 is the most important gap (critic contract), so sort ascending.
+    for gap in sorted(gaps, key=lambda g: g.priority)[:_MAX_NEW_QUERIES]:
         q = gap.target_query or gap.description
         if q and not any(_jaccard_dup(q, existing) for existing in prior_queries + new_queries):
             new_queries.append(q)
@@ -71,6 +72,7 @@ async def gap_analyst_node(state: ResearchState) -> ResearchState:
             "plan": effective_plan,
             "loop_count": state.get("loop_count", 0) + 1,
             "evidence_gaps": [],
+            "pending_queries": [],
         }
 
     merged = prior_queries + new_queries
@@ -85,6 +87,9 @@ async def gap_analyst_node(state: ResearchState) -> ResearchState:
     return {
         "plan": new_plan,
         "loop_count": state.get("loop_count", 0) + 1,
+        # Only the new queries are searched next round; the planner passes
+        # them through instead of re-decomposing the original question.
+        "pending_queries": new_queries,
         # Clear gaps so the verifier→critic→gap_analyst cycle doesn't re-fire them.
         "evidence_gaps": [],
     }

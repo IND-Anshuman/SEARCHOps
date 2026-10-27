@@ -38,14 +38,16 @@ Return ONLY valid JSON matching this schema:
 {
   "gaps": [
     {"description": "what information is missing/weak",
-     "target_query": "a specific search query that would close this gap",
+     "target_query": "a specific web search query (under 12 words) that would close this gap",
      "priority": 1}
-  ],
-  "classifications": {"<claim_id>": "supported" | "contested" | "unverified"}
+  ]
 }
 
 Rules:
-- Identify genuine gaps in coverage, not superficial ones. Prioritize 1 (highest)..5 (lowest).
+- Judge COVERAGE only: which parts of the query the claims leave unanswered or rest on a single source.
+  Claim truth is checked separately against the sources; do not grade it here.
+- Identify genuine gaps, not superficial ones. Priority 1 = most important .. 5 = least.
+- At most 4 gaps. Each target_query must differ from the queries already searched.
 - Return gaps=[] when the evidence already answers the query well.
 - Do NOT defer to prior rounds' opinions — re-evaluate from scratch each call.
 - Return NO markdown, NO commentary — only the JSON object."""
@@ -87,20 +89,22 @@ async def critic_node(state: ResearchState, *, llm_router: LLMRouter) -> Researc
 
     NODE_INVOCATIONS_TOTAL.labels(node="critic", outcome="invoked").inc()
 
-    claims_brief = "\n".join(f"- [{c.id}] ({c.status}) {c.text[:160]}" for c in claims[:20]) or "None"
+    claims_brief = (
+        "\n".join(f"- {c.text[:200]} ({len({ct.url for ct in c.citations})} source)" for c in claims[:60]) or "None"
+    )
+    searched = "\n".join(f"- {q}" for q in (state.get("searched_queries") or [])[:30]) or "None"
 
     raw = await llm_router.generate(
-        prompt=f"QUERY: {query}\n\nEVIDENCE CLAIMS:\n{claims_brief}",
+        prompt=f"QUERY: {query}\n\nQUERIES ALREADY SEARCHED:\n{searched}\n\nEVIDENCE CLAIMS:\n{claims_brief}",
         system_prompt=_SYSTEM_CRITIC_PROMPT,
         temperature=0.0,
     )
 
     parsed = _clean_json(raw)
     gaps_parsed = parsed.get("gaps", []) or []
-    class_map = parsed.get("classifications", {}) or {}
 
     gaps: list[EvidenceGap] = []
-    for g in gaps_parsed[:10]:  # max 10 gaps per round
+    for g in gaps_parsed[:4]:  # max 4 gaps per round
         if not isinstance(g, dict):
             continue
         desc = (g.get("description") or "").strip()
@@ -118,19 +122,10 @@ async def critic_node(state: ResearchState, *, llm_router: LLMRouter) -> Researc
             )
         )
 
-    # Apply per-claim status classifications to the accumulated claims.
-    updated_claims: list[Claim] = []
-    for claim in claims:
-        status = class_map.get(claim.id)
-        if status in ("supported", "contested", "refuted"):
-            updated_claims.append(claim.model_copy(update={"status": status}))
-        else:
-            updated_claims.append(claim)
-
     if not gaps and claims:
         # No gaps — all evidence satisfies the query.
         log.info("Critic: evidence judged sufficient, no gaps")
         NODE_INVOCATIONS_TOTAL.labels(node="critic", outcome="ok").inc()
 
     log.info("Critic node complete", gap_count=len(gaps))
-    return {"evidence_gaps": gaps, "evidence_claims": updated_claims}
+    return {"evidence_gaps": gaps}
