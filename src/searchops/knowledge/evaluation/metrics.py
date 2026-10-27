@@ -338,7 +338,12 @@ def _reason_rank(reason: str) -> int:
 
 
 def _claim_text(claim: Any) -> str:
-    return str(getattr(claim, "text", "") or claim if isinstance(claim, str) else getattr(claim, "text", "") or "")
+    """Read a claim's text from either a model or a dict."""
+    if isinstance(claim, str):
+        return claim
+    if isinstance(claim, dict):
+        return str(claim.get("text", "") or "")
+    return str(getattr(claim, "text", "") or "")
 
 
 def hallucination_rate(
@@ -393,13 +398,19 @@ def hallucination_rate(
 
 
 def citation_coverage(claims: Iterable[Any]) -> CitationScore:
-    """Fraction of claims carrying at least one resolvable http(s) citation."""
+    """Fraction of claims carrying at least one resolvable http(s) citation.
+
+    Claims arrive as live pydantic models during a run and as plain dicts
+    after a Redis round-trip. Reading only the model attribute would report
+    0% coverage for a job whose claims are all cited — the metric would look
+    like a finding about the report when it is a bug in the metric.
+    """
     total = 0
     cited = 0
     for claim in claims:
         total += 1
-        citations = getattr(claim, "citations", None) or []
-        if any(str(getattr(c, "url", "")).startswith("http") for c in citations):
+        citations = _claim_citations(claim)
+        if any(_citation_url(c).startswith("http") for c in citations):
             cited += 1
 
     coverage = (cited / total) if total else 0.0
@@ -408,3 +419,17 @@ def citation_coverage(claims: Iterable[Any]) -> CitationScore:
         cited=cited,
         total=total,
     )
+
+
+def _claim_citations(claim: Any) -> list[Any]:
+    """Read a claim's citations from either a model or a dict."""
+    if isinstance(claim, dict):
+        return list(claim.get("citations") or [])
+    return list(getattr(claim, "citations", None) or [])
+
+
+def _citation_url(citation: Any) -> str:
+    """Read a citation's URL from either a model or a dict."""
+    if isinstance(citation, dict):
+        return str(citation.get("url", "") or "")
+    return str(getattr(citation, "url", "") or "")

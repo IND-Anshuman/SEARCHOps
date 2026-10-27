@@ -77,6 +77,12 @@ class StateTokenOptimizer:
         bytes_saved = max(0, initial_raw_bytes - compacted_bytes)
         savings_percent = round((bytes_saved / max(1, initial_raw_bytes)) * 100, 1)
 
+        # Capture the validated corpus BEFORE the raw text is dropped. This is
+        # the first place the page text is stripped, so it is the last place
+        # the corpus can be taken from. The evaluation node measures
+        # hallucination against this; without it the measurement is skipped.
+        corpus = build_corpus(scraped)
+
         log.info(
             "State compaction complete",
             doc_count=len(scraped),
@@ -84,9 +90,33 @@ class StateTokenOptimizer:
             compacted_bytes=compacted_bytes,
             bytes_saved=bytes_saved,
             savings_percent=f"{savings_percent}%",
+            corpus_chars=len(corpus),
         )
 
-        return {"scraped_contents": compacted}
+        return {"scraped_contents": compacted, "evidence_corpus": corpus}
+
+
+# The corpus is a bounded sample of the retrieved text, not the raw blobs: the
+# point of compaction is to keep raw document text out of the remaining
+# pipeline, and this sample is small enough not to undo that.
+_MAX_CORPUS_CHARS = 200_000
+
+
+def build_corpus(scraped: list[dict[str, Any]]) -> str:
+    """Concatenate the scraped page text into a bounded corpus sample."""
+    parts: list[str] = []
+    total = 0
+    for page in scraped:
+        if not isinstance(page, dict):
+            continue
+        content = str(page.get("content") or "")
+        if not content:
+            continue
+        parts.append(content)
+        total += len(content)
+        if total >= _MAX_CORPUS_CHARS:
+            break
+    return "\n".join(parts)[:_MAX_CORPUS_CHARS]
 
 
 async def state_compressor_node(state: ResearchState) -> ResearchState:
