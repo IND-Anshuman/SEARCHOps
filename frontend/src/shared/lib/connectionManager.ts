@@ -13,8 +13,8 @@
  */
 
 import { executionStore } from '../store/executionStore';
+import { getSessionToken, wsBase } from './api';
 
-const WS_BASE = import.meta.env.VITE_API_BASE_URL?.replace(/^http/, 'ws') ?? 'ws://localhost:8000';
 const HEARTBEAT_INTERVAL = 30_000; // 30s
 const HEARTBEAT_TIMEOUT = 10_000;  // 10s to receive pong
 const MAX_RETRIES = 5;
@@ -37,6 +37,10 @@ const conn: ConnectionState = {
   pingInterval: null,
   pongTimer: null,
 };
+
+// Bumped on every open/disconnect, so a socket whose token fetch finishes
+// after the user moved on is never opened.
+let openSeq = 0;
 
 function clearTimers(): void {
   if (conn.retryTimer) { clearTimeout(conn.retryTimer); conn.retryTimer = null; }
@@ -65,15 +69,26 @@ export function disconnect(): void {
   }
   conn.jobId = null;
   conn.retryCount = 0;
+  openSeq += 1;
   executionStore.setConnectionStatus('disconnected');
 }
 
 function _openSocket(jobId: string): void {
-  const url = `${WS_BASE}/ws/research/${jobId}`;
-  const ws = new WebSocket(url);
-  conn.ws = ws;
-
+  const seq = ++openSeq;
   executionStore.setConnectionStatus('connecting');
+  // Browsers cannot set headers on a WebSocket, so the Clerk session token
+  // travels as a subprotocol. The server answers with "searchops" and never
+  // echoes the token.
+  void getSessionToken().then((token) => {
+    if (seq !== openSeq || conn.jobId !== jobId) return;
+    _attachSocket(jobId, token);
+  });
+}
+
+function _attachSocket(jobId: string, token: string | null): void {
+  const url = `${wsBase()}/ws/research/${jobId}`;
+  const ws = new WebSocket(url, token ? ['searchops', `bearer.${token}`] : undefined);
+  conn.ws = ws;
 
   ws.onopen = () => {
     conn.retryCount = 0;

@@ -1,16 +1,16 @@
 import React, { useState, useCallback, useRef, useEffect } from 'react';
-import ReactMarkdown from 'react-markdown';
-import remarkGfm from 'remark-gfm';
-import rehypeHighlight from 'rehype-highlight';
-import 'highlight.js/styles/github-dark.css';
+import { ReportMarkdown, sourcesFromLines } from './ReportMarkdown';
 import { useExecutionStore } from '../shared/store/useExecutionStore';
+import { num, str, dateLabel } from '../shared/lib/safe';
 import { ReportInsights } from './ReportInsights';
 import {
   BlockEditor,
   type ReportDocumentData,
 } from './BlockEditor';
-import { API_BASE, API_KEY } from '../shared/store/executionStore';
-import { FileText, Download, Copy, Check, Search, BookOpen, X, FileDown, Loader2 } from 'lucide-react';
+import { API_BASE } from '../shared/store/executionStore';
+import { apiFetch } from '../shared/lib/api';
+import { printReport } from '../shared/lib/printReport';
+import { FileText, Download, Copy, Check, Search, X, FileDown, Loader2, BookOpen } from 'lucide-react';
 
 interface TocEntry {
   text: string;
@@ -43,7 +43,6 @@ function buildToc(markdown: string): TocEntry[] {
 
 const ExportBtn: React.FC<{
   label: string;
-  fmt: string;
   busy: boolean;
   onClick: () => void;
 }> = ({ label, busy, onClick }) => (
@@ -52,50 +51,88 @@ const ExportBtn: React.FC<{
     onClick={onClick}
     disabled={busy}
     title={`Download as ${label}`}
-    className="bg-slate-950 hover:bg-slate-850 border border-slate-800 text-slate-300 px-2.5 py-1 rounded font-bold transition flex items-center gap-1 text-[10px] disabled:opacity-50"
+    className="text-label text-ink-muted hover:text-ink border border-rule bg-paper hover:bg-paper-raised px-2.5 py-1.5 rounded-md transition-all tactile-btn flex items-center gap-1.5 disabled:opacity-40 disabled:hover:text-ink-muted shadow-sm hover:shadow"
   >
-    {busy ? <Loader2 className="w-3 h-3 animate-spin" /> : <FileDown className="w-3 h-3" />}
+    {busy ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <FileDown className="w-3.5 h-3.5" />}
     <span>{label}</span>
   </button>
 );
 
+/**
+ * Drop the report's own first heading when it repeats the title.
+ *
+ * The page already carries the title as its h1. The report document almost
+ * always opens with a heading naming the same subject, so the reader sees
+ * "quantum error correction" twice within a few lines. The heading is hidden
+ * from the *view* only — it stays in the block list, so exporting, editing
+ * and the contents rail are unaffected.
+ */
+function _withoutDuplicateTitle(
+  doc: ReportDocumentData,
+  title: string,
+): ReportDocumentData {
+  const wanted = title.trim().toLowerCase();
+  if (!wanted) return doc;
+
+  const first = doc.blocks[0];
+  if (!first || first.kind !== 'heading') return doc;
+
+  const heading = first.text.replace(/^#+\s*/, '').trim().toLowerCase();
+  // Only an exact match is a duplicate. A heading that merely contains the
+  // title is doing real work and must stay.
+  if (heading !== wanted) return doc;
+
+  return {
+    ...doc,
+    blocks: doc.blocks.map((b, i) => (i === 0 ? { ...b, hidden: true } : b)),
+  };
+}
+
+/**
+ * Report reader.
+ *
+ * The hero surface, so it is built as a *document*, not a dashboard panel:
+ * a sheet of paper on a desk, a running head (the folio), a display-face
+ * title, prose set in a reading face at a literary measure, and a contents
+ * rail that is a table of contents.
+ *
+ * The previous version was a three-column split whose body was set in 14px
+ * Inter with 1.75 line-height — a chat transcript wearing a report's
+ * clothes. The report is the thing a reader is meant to *read*, so it is
+ * set like one: serif, 68ch, ruled sections, and a title that carries the
+ * authority a paper's title carries.
+ */
 export const ReportsViewer: React.FC = () => {
   const { report } = useExecutionStore();
   const [copied, setCopied] = useState(false);
   const [searchText, setSearchText] = useState('');
   const [searchVisible, setSearchVisible] = useState(false);
   const contentRef = useRef<HTMLDivElement>(null);
+  const articleRef = useRef<HTMLElement>(null);
   const searchRef = useRef<HTMLInputElement>(null);
-  // The block document is the editable source of truth. It starts null and is
-  // fetched; while absent we fall back to rendering the plain markdown so the
-  // report is never blocked on it.
   const [blockDoc, setBlockDoc] = useState<ReportDocumentData | null>(null);
   const [exporting, setExporting] = useState<'deck' | 'docx' | 'pdf' | null>(null);
-  const [exportError, setExportError] = useState<string>('');
+  const [exportError, setExportError] = useState('');
+  // On a narrow window the apparatus is a drawer over the page, not a column
+  // beside it, so it starts closed and is opened deliberately.
+  const [apparatusOpen, setApparatusOpen] = useState(false);
 
-  // Fetch the block document so the report can be edited. A failed fetch is
-  // not fatal: the plain markdown still renders.
   useEffect(() => {
     if (!report?.id) return;
     let cancelled = false;
     void (async () => {
       try {
-        const res = await fetch(`${API_BASE}/api/v1/research/${report.id}`, {
-          headers: { ...(API_KEY ? { 'X-API-Key': API_KEY } : {}) },
-        });
+        const res = await apiFetch(`${API_BASE}/api/v1/research/${report.id}`);
         if (!res.ok) return;
         const data = (await res.json()) as { report_document?: ReportDocumentData | null };
         if (!cancelled && data.report_document) setBlockDoc(data.report_document);
       } catch {
-        /* leave document null — the markdown fallback covers this */
+        /* leave document null - the markdown fallback covers this */
       }
     })();
-    return () => {
-      cancelled = true;
-    };
+    return () => { cancelled = true; };
   }, [report?.id]);
 
-  // Focus search input when visible
   useEffect(() => {
     if (searchVisible) searchRef.current?.focus();
   }, [searchVisible]);
@@ -121,19 +158,20 @@ export const ReportsViewer: React.FC = () => {
     URL.revokeObjectURL(url);
   }, [report]);
 
-  // Deck / Word / PDF are produced server-side so the claim→source binding
-  // travels with the artifact. A failed export must surface, never silently
-  // fall back to the plain-text download — the user would send a .md believing
-  // it was a deck.
   const handleExport = useCallback(
     async (format: 'deck' | 'docx' | 'pdf') => {
       if (!report) return;
       setExporting(format);
       setExportError('');
       try {
-        const res = await fetch(`${API_BASE}/api/v1/research/${report.id}/export/${format}`, {
-          headers: { ...(API_KEY ? { 'X-API-Key': API_KEY } : {}) },
-        });
+        const res = await apiFetch(`${API_BASE}/api/v1/research/${report.id}/export/${format}`);
+        // No PDF renderer on this server (the API-only deployment has no
+        // browser): print the report page through the user's browser, which
+        // offers "Save as PDF", styled like the server export.
+        if (format === 'pdf' && res.status === 503 && articleRef.current) {
+          printReport(articleRef.current, str(report.title));
+          return;
+        }
         if (!res.ok) {
           const detail = (await res.json().catch(() => null)) as { detail?: string } | null;
           setExportError(detail?.detail ?? `${format.toUpperCase()} export failed (HTTP ${res.status}).`);
@@ -164,12 +202,20 @@ export const ReportsViewer: React.FC = () => {
 
   if (!report) {
     return (
-      <div className="flex-1 flex flex-col items-center justify-center p-12 bg-slate-950">
-        <div className="flex flex-col items-center p-10 border border-dashed border-slate-800 rounded-lg text-slate-600 bg-slate-950/60 max-w-sm gap-3">
-          <FileText className="w-8 h-8 text-slate-700" />
-          <p className="font-sans text-xs text-slate-500">No synthesized report available.</p>
-          <p className="font-sans text-[10px] text-slate-600 text-center leading-relaxed">
-            Reports are generated by the report writer node upon successful graph execution.
+      <div className="flex-1 flex flex-col items-center justify-center p-12 bg-paper">
+        <div className="flex flex-col items-center max-w-sm text-center py-12">
+          {/* An empty sheet: a ruled rectangle, not an icon in a box. */}
+          <div
+            aria-hidden="true"
+            className="w-12 h-16 border border-rule-strong rounded-sm bg-paper-raised mb-5 relative"
+          >
+            <span className="absolute left-2 right-2 top-4 h-px bg-rule" />
+            <span className="absolute left-2 right-4 top-7 h-px bg-rule" />
+            <span className="absolute left-2 right-3 top-10 h-px bg-rule" />
+          </div>
+          <p className="font-display text-display-sm text-ink leading-snug">No report yet</p>
+          <p className="text-label text-ink-muted mt-2 leading-relaxed">
+            A report is written when a run finishes. Start a run and it will appear here.
           </p>
         </div>
       </div>
@@ -178,197 +224,229 @@ export const ReportsViewer: React.FC = () => {
 
   const toc = buildToc(report.markdownContent);
 
-  // Filter content by search (highlight matching paragraphs)
   const filteredContent = searchText.trim()
     ? report.markdownContent
         .split('\n')
-        .filter(line => line.toLowerCase().includes(searchText.toLowerCase()))
-        .join('\n') || report.markdownContent // fallback to full if no matches
+        .filter(line => str(line).toLowerCase().includes(searchText.toLowerCase()))
+        .join('\n') || report.markdownContent
     : report.markdownContent;
 
-  // Custom heading components with id anchors for ToC navigation
-  const components = {
-    h1: ({ children, ...props }: React.HTMLAttributes<HTMLHeadingElement>) => {
-      const text = String(children ?? '');
-      const slug = slugify(text);
-      return <h1 id={slug} className="text-lg font-bold border-b border-slate-800 pb-2 pt-4 text-emerald-400 font-sans tracking-tight scroll-mt-4" {...props}>{children}</h1>;
-    },
-    h2: ({ children, ...props }: React.HTMLAttributes<HTMLHeadingElement>) => {
-      const text = String(children ?? '');
-      const slug = slugify(text);
-      return <h2 id={slug} className="text-base font-bold pt-3 pb-1 text-cyan-400 font-sans tracking-tight scroll-mt-4" {...props}>{children}</h2>;
-    },
-    h3: ({ children, ...props }: React.HTMLAttributes<HTMLHeadingElement>) => {
-      const text = String(children ?? '');
-      const slug = slugify(text);
-      return <h3 id={slug} className="text-sm font-bold pt-2 text-indigo-400 font-sans tracking-tight scroll-mt-4" {...props}>{children}</h3>;
-    },
-    p: ({ children }: { children?: React.ReactNode }) => <p className="text-slate-300 leading-relaxed font-sans text-sm">{children}</p>,
-    a: ({ children, ...props }: React.AnchorHTMLAttributes<HTMLAnchorElement>) => <a className="text-emerald-400 underline underline-offset-2 hover:text-emerald-300 transition-colors" target="_blank" rel="noopener noreferrer" {...props}>{children}</a>,
-    ul: ({ children }: { children?: React.ReactNode }) => <ul className="list-disc pl-5 space-y-1 text-slate-300 text-sm">{children}</ul>,
-    ol: ({ children }: { children?: React.ReactNode }) => <ol className="list-decimal pl-5 space-y-1 text-slate-300 text-sm">{children}</ol>,
-    li: ({ children }: { children?: React.ReactNode }) => <li className="leading-relaxed">{children}</li>,
-    blockquote: ({ children }: { children?: React.ReactNode }) => <blockquote className="border-l-2 border-emerald-500/40 pl-4 italic text-slate-400 my-2">{children}</blockquote>,
-    table: ({ children }: { children?: React.ReactNode }) => <div className="overflow-x-auto my-4"><table className="w-full text-xs border-collapse border border-slate-800">{children}</table></div>,
-    thead: ({ children }: { children?: React.ReactNode }) => <thead className="bg-slate-900">{children}</thead>,
-    th: ({ children }: { children?: React.ReactNode }) => <th className="border border-slate-800 px-3 py-2 text-left text-slate-300 font-semibold">{children}</th>,
-    td: ({ children }: { children?: React.ReactNode }) => <td className="border border-slate-800 px-3 py-2 text-slate-400">{children}</td>,
-    code: ({ children, className }: React.HTMLAttributes<HTMLElement>) => {
-      const isBlock = className?.startsWith('language-');
-      return isBlock
-        ? <code className={`${className ?? ''} text-xs`}>{children}</code>
-        : <code className="bg-slate-900 text-emerald-300 px-1.5 py-0.5 rounded text-xs font-mono">{children}</code>;
-    },
-    pre: ({ children }: { children?: React.ReactNode }) => (
-      <pre className="bg-slate-900 border border-slate-800 rounded-lg overflow-x-auto text-xs my-4 p-4">
-        {children}
-      </pre>
-    ),
-  };
-
   return (
-    <div className="flex-1 flex h-full bg-slate-950 overflow-hidden select-text">
-      {/* Main Report Canvas */}
-      <div className="flex-1 flex flex-col overflow-hidden border-r border-slate-900">
-        {/* Controls Header */}
-        <div className="bg-slate-900 border-b border-slate-800 p-2.5 flex items-center justify-between shrink-0 select-none">
-          <div className="flex items-center space-x-2">
-            <FileText className="w-4 h-4 text-emerald-400" />
-            <span className="font-bold text-slate-100 uppercase text-[11px] font-sans tracking-wide">Synthesized Intelligence Report</span>
+    <div className="flex-1 flex h-full bg-paper overflow-hidden min-h-0">
+      {/* ── The page ──────────────────────────────────────────────────────
+          A three-column page: the contents in the left margin, the document
+          in the middle, the apparatus in the right margin.
+
+          The previous layout was the AI-dashboard arrangement — a document
+          column pushed to the left of a docked insights drawer, with a
+          separate contents rail on the far right. The report lived in a
+          middle column with chrome on both sides, and its own apparatus was
+          a drawer that squeezed the text.
+
+          Now the report is a page with real margins, the way a printed
+          document has them. The contents and the apparatus are marginalia,
+          not sidebars that compete with the text. The text block keeps a
+          literary measure and sits in the optical centre of the window, and
+          the margins narrow away on a small screen rather than squeezing. */}
+      <div className="flex-1 flex min-w-0">
+        {/* Left margin — the contents of this document. */}
+        <nav
+          aria-label="Report contents"
+          className="w-52 shrink-0 hidden xl:block overflow-y-auto border-r border-rule/70 bg-paper/80 paper-wash px-5 py-8"
+        >
+          <div className="folio pb-2 border-b border-rule mb-3">Contents</div>
+          {toc.length === 0 ? (
+            <p className="text-micro text-ink-faint leading-relaxed">
+              This report has no headings.
+            </p>
+          ) : (
+            <ul className="space-y-0.5">
+              {toc.map((item, i) => (
+                <li key={i}>
+                  <button
+                    type="button"
+                    onClick={() => scrollToHeading(item.slug)}
+                    className={`w-full text-left hover:text-ink transition-colors truncate block text-ink-muted ${
+                      item.level === 1
+                        ? 'text-label font-medium pl-0 py-[3px]'
+                        : item.level === 2
+                          ? 'text-label pl-3 py-[2px]'
+                          : 'text-micro pl-6 py-[1px]'
+                    }`}
+                    title={item.text}
+                  >
+                    {item.text}
+                  </button>
+                </li>
+              ))}
+            </ul>
+          )}
+        </nav>
+
+        {/* The document. */}
+        <div className="flex-1 min-w-0 flex flex-col">
+          {/* The folio — a running head. */}
+          <div className="shrink-0 bg-paper-raised paper-wash border-b border-rule px-8 py-2.5 flex items-center justify-between gap-4 shadow-sm">
+          <div className="min-w-0 flex items-baseline gap-3">
+            <span className="folio shrink-0">Report</span>
+            <span aria-hidden="true" className="text-rule-strong">·</span>
+            <span className="text-label text-ink-muted truncate">{str(report.title) || 'Untitled'}</span>
           </div>
-          <div className="flex items-center space-x-2">
-            {/* Search toggle */}
+          <div className="flex items-center gap-1 shrink-0">
             <button
+              type="button"
               onClick={() => setSearchVisible(v => !v)}
               title="Find in report"
-              className="bg-slate-950 hover:bg-slate-850 border border-slate-800 text-slate-300 px-2.5 py-1 rounded font-bold transition flex items-center space-x-1 text-[10px]"
+              aria-pressed={searchVisible}
+              className="p-1.5 text-ink-faint hover:text-ink hover:bg-paper rounded-md transition-colors"
             >
               {searchVisible ? <X className="w-3.5 h-3.5" /> : <Search className="w-3.5 h-3.5" />}
-              <span className="hidden sm:inline">{searchVisible ? 'CLOSE' : 'FIND'}</span>
             </button>
-            <button onClick={handleCopy} className="bg-slate-950 hover:bg-slate-850 border border-slate-800 text-slate-300 px-2.5 py-1 rounded font-bold transition flex items-center space-x-1 text-[10px]">
-              {copied ? <Check className="w-3.5 h-3.5 text-emerald-400" /> : <Copy className="w-3.5 h-3.5" />}
-              <span>{copied ? 'COPIED' : 'COPY'}</span>
+            <button
+              type="button"
+              onClick={handleCopy}
+              title="Copy markdown"
+              className="p-1.5 text-ink-faint hover:text-ink hover:bg-paper rounded-md transition-colors"
+            >
+              {copied ? <Check className="w-3.5 h-3.5 text-ink" /> : <Copy className="w-3.5 h-3.5" />}
             </button>
-            <button onClick={handleDownload} className="bg-slate-950 hover:bg-slate-850 border border-slate-800 text-slate-300 px-2.5 py-1 rounded font-bold transition flex items-center space-x-1 text-[10px]">
+            <button
+              type="button"
+              onClick={handleDownload}
+              title="Download markdown"
+              className="p-1.5 text-ink-faint hover:text-ink hover:bg-paper rounded-md transition-colors"
+            >
               <Download className="w-3.5 h-3.5" />
-              <span>MARKDOWN</span>
             </button>
-            <span className="w-px h-4 bg-slate-800" />
-            <ExportBtn label="PPTX" fmt="deck" busy={exporting === 'deck'} onClick={() => void handleExport('deck')} />
-            <ExportBtn label="DOCX" fmt="docx" busy={exporting === 'docx'} onClick={() => void handleExport('docx')} />
-            <ExportBtn label="PDF" fmt="pdf" busy={exporting === 'pdf'} onClick={() => void handleExport('pdf')} />
+            <span aria-hidden="true" className="w-px h-4 bg-rule mx-1" />
+            {/* On a narrow window the apparatus is a drawer, so it needs a
+                way in. On a wide one it is already visible and this
+                button is redundant, so it is hidden there. */}
+            <button
+              type="button"
+              onClick={() => setApparatusOpen(true)}
+              title="Show evidence, gaps and terms"
+              className="lg:hidden p-1.5 text-ink-faint hover:text-ink hover:bg-paper rounded-md transition-colors"
+            >
+              <BookOpen className="w-3.5 h-3.5" />
+            </button>
+            <ExportBtn label="PPTX" busy={exporting === 'deck'} onClick={() => void handleExport('deck')} />
+            <ExportBtn label="DOCX" busy={exporting === 'docx'} onClick={() => void handleExport('docx')} />
+            <ExportBtn label="PDF" busy={exporting === 'pdf'} onClick={() => void handleExport('pdf')} />
           </div>
         </div>
 
         {exportError ? (
-          <div role="status" className="bg-slate-950 border-b border-red-500/30 px-4 py-2 text-[11px] text-red-300 font-sans">
-            {exportError}
-            <button type="button" onClick={() => setExportError('')} className="ml-2 text-red-400/70 hover:text-red-200" aria-label="Dismiss">×</button>
+          <div
+            role="status"
+            className="shrink-0 bg-paper-inset border-b border-rule-strong px-8 py-2.5 text-label text-ink flex items-center justify-between gap-3"
+          >
+            <span className="truncate">{exportError}</span>
+            <button
+              type="button"
+              onClick={() => setExportError('')}
+              className="text-ink-muted hover:text-ink shrink-0"
+              aria-label="Dismiss"
+            >
+              ×
+            </button>
           </div>
         ) : null}
 
-        {/* Search bar (collapsible) */}
         {searchVisible && (
-          <div className="bg-slate-950 border-b border-slate-800 px-4 py-2 flex items-center space-x-2">
-            <Search className="w-3.5 h-3.5 text-slate-500 shrink-0" />
+          <div className="shrink-0 bg-paper-raised border-b border-rule px-8 py-2.5 flex items-center gap-2.5">
+            <Search className="w-3.5 h-3.5 text-ink-faint shrink-0" />
             <input
               ref={searchRef}
               type="text"
               value={searchText}
               onChange={e => setSearchText(e.target.value)}
-              placeholder="Search report content..."
-              className="flex-1 bg-transparent border-none text-xs text-slate-200 focus:outline-none placeholder-slate-600 font-mono"
+              placeholder="Search this report"
+              className="flex-1 bg-transparent text-label text-ink focus:outline-none placeholder:text-ink-faint"
             />
             {searchText && (
-              <button onClick={() => setSearchText('')} className="text-slate-500 hover:text-slate-300">
-                <X className="w-3 h-3" />
+              <button
+                type="button"
+                onClick={() => setSearchText('')}
+                className="text-ink-faint hover:text-ink"
+                aria-label="Clear search"
+              >
+                <X className="w-3.5 h-3.5" />
               </button>
-            )}
-            {searchText && (
-              <span className="text-slate-500 text-[10px] font-mono">
-                {filteredContent === report.markdownContent ? '0 matches' : 'filtered'}
-              </span>
             )}
           </div>
         )}
 
-        {/* Report Content */}
-        <div className="flex-1 overflow-hidden flex">
-        <div ref={contentRef} className="flex-1 overflow-y-auto p-6 max-w-4xl mx-auto w-full">
-          <div className="border-b border-slate-800 pb-4 mb-6 select-none">
-            <h1 className="text-xl font-bold text-slate-100 tracking-tight font-sans">{report.title}</h1>
+          {/* The sheet. The measure is fixed; the sheet is centred in
+              whatever space the margins leave. */}
+          <div ref={contentRef} className="flex-1 overflow-y-auto min-h-0 px-4">
+            <article ref={articleRef} className="max-w-[72ch] mx-auto px-10 pt-12 pb-24 my-6 bg-paper-raised sheet-raised card-beveled border border-rule/70 animate-settle shadow-sheet dark:shadow-sheet-dark">
+              <h1 className="font-display text-display-lg text-ink text-balance">
+                {str(report.title) || 'Report'}
+              </h1>
 
-            {/* Honest provenance. When the report was synthesised from evidence
-                (model refusal / empty reply) the backend says so, and the user
-                must see it — otherwise a degraded report is indistinguishable
-                from one the model actually wrote. */}
-            {report.userMessage ? (
-              <div
-                role="status"
-                className="mt-2 border border-amber-500/30 bg-amber-500/5 rounded px-3 py-2"
-              >
-                <p className="text-[11px] text-amber-200 font-sans leading-relaxed">
-                  {report.userMessage}
-                </p>
+              {report.userMessage ? (
+                <div
+                  role="status"
+                  className="mt-6 border border-rule-strong/25 bg-paper-inset intaglio-well px-4 py-3 rounded-md"
+                >
+                  <p className="text-label text-ink leading-relaxed">{str(report.userMessage)}</p>
+                </div>
+              ) : null}
+
+              {/* The colophon: the facts about this document, set as a
+                  colophon on a title page rather than as a status strip. */}
+              <div className="mt-5 pb-8 border-b border-rule flex items-center gap-3 text-micro text-ink-faint">
+                <span className="tnum">{dateLabel(report.generatedAt)}</span>
+                <span aria-hidden="true">·</span>
+                <span className="tnum">
+                  {num(report.sourcesCount)} {num(report.sourcesCount) === 1 ? 'source' : 'sources'}
+                </span>
+                <span aria-hidden="true">·</span>
+                <span className="tnum">
+                  {num(report.entitiesCount)} {num(report.entitiesCount) === 1 ? 'entity' : 'entities'}
+                </span>
               </div>
-            ) : null}
 
-            <div className="flex items-center space-x-3 text-[10px] text-slate-500 font-mono mt-2">
-              <span>{report.generatedAt}</span>
-              <span>•</span>
-              <span>{report.sourcesCount} sources</span>
-              <span>•</span>
-              <span>{report.entitiesCount} entities</span>
-            </div>
+              <div className="mt-8">
+                {blockDoc ? (
+                  <BlockEditor
+                    jobId={report.id}
+                    doc={_withoutDuplicateTitle(blockDoc, report.title)}
+                    onDocumentChange={setBlockDoc}
+                  />
+                ) : (
+                  <div className="prose">
+                    <ReportMarkdown
+                      sources={sourcesFromLines([report.markdownContent])}
+                      text={(() => {
+                        let content = filteredContent;
+                        const title = (report.title || '').trim().toLowerCase();
+                        if (title) {
+                          const lines = content.split('\n');
+                          if (lines[0] && lines[0].replace(/^#+\s*/, '').trim().toLowerCase() === title) {
+                            content = lines.slice(1).join('\n').trimStart();
+                          }
+                        }
+                        return content;
+                      })()}
+                    />
+                  </div>
+                )}
+              </div>
+            </article>
           </div>
-
-          {blockDoc ? (
-            <BlockEditor
-              jobId={report.id}
-              doc={blockDoc}
-              onDocumentChange={setBlockDoc}
-            />
-          ) : (
-            <ReactMarkdown
-              remarkPlugins={[remarkGfm]}
-              rehypePlugins={[rehypeHighlight]}
-              components={components as never}
-            >
-              {filteredContent}
-            </ReactMarkdown>
-          )}
         </div>
 
-        {/* Insights: coverage gaps, study guide, glossary, evidence check. */}
-        <ReportInsights jobId={report.id} enabled />
-        </div>
-      </div>
-
-      {/* ToC Sidebar */}
-      <div className="w-52 bg-slate-900/40 p-3 overflow-y-auto hidden lg:block shrink-0 select-none">
-        <div className="flex items-center space-x-1.5 text-slate-400 font-bold uppercase text-[9px] mb-3 pb-1.5 border-b border-slate-800">
-          <BookOpen className="w-3.5 h-3.5 text-emerald-400" />
-          <span>Contents</span>
-        </div>
-        <nav className="space-y-1">
-          {toc.length === 0 && (
-            <p className="text-slate-600 text-[9px]">No headings found</p>
-          )}
-          {toc.map((item, i) => (
-            <button
-              key={i}
-              onClick={() => scrollToHeading(item.slug)}
-              className={`w-full text-left hover:text-slate-200 cursor-pointer transition text-slate-450 truncate block ${
-                item.level === 1 ? 'font-bold text-[10px] pl-0' :
-                item.level === 2 ? 'pl-3 text-[10px]' : 'pl-5 text-[9px]'
-              }`}
-              title={item.text}
-            >
-              {item.text}
-            </button>
-          ))}
-        </nav>
+        {/* Right margin — the apparatus: trust, gaps, terms. On a wide window
+            it is a column of the page; on a narrow one it is a drawer that
+            slides over the document, so the text never loses width. */}
+        <ReportInsights
+          jobId={report.id}
+          enabled
+          drawerOpen={apparatusOpen}
+          onDismiss={() => setApparatusOpen(false)}
+        />
       </div>
     </div>
   );

@@ -1,117 +1,149 @@
-import React from 'react';
+import React, { useState } from 'react';
 import { useExecutionStore } from '../shared/store/useExecutionStore';
 import { useWorkbenchStore } from '../shared/store/useWorkbenchStore';
-import { 
-  GitFork, 
-  Clock, 
-  Play, 
-  CheckCircle2, 
-  AlertTriangle,
+import { money, num, str } from '../shared/lib/safe';
+import {
+  GitFork,
   ArrowRight,
-  Database
+  CircleAlert,
+  Loader2,
+  Check,
 } from 'lucide-react';
+import { StatusMarkGlyph } from '../shared/components/StatusMark';
 
+/** A node has no real latency until it has actually run. */
+function hasRun(status: string): boolean {
+  return status === 'completed' || status === 'failed' || status === 'retrying';
+}
+
+/**
+ * Pipeline view.
+ *
+ * Previously every node was a wide bordered card with a monospace all-caps
+ * label, a coloured status pill and a "Template: x.jinja2" line — a dense
+ * debug dump rather than a pipeline you can read. This reads as a sequence:
+ * state on the left, name, then real measurements only where they exist.
+ */
 export const LangGraphCanvas: React.FC = () => {
   const { nodes, job } = useExecutionStore();
   const { inspectItem } = useWorkbenchStore();
 
+  const completed = nodes.filter(n => n.status === 'completed').length;
+  const failed = nodes.filter(n => n.status === 'failed').length;
+
   return (
-    <div className="flex-1 flex flex-col h-full bg-slate-950 text-xs font-mono select-none overflow-hidden">
-      {/* Topology Header */}
-      <div className="bg-slate-900 border-b border-slate-800 p-3 flex items-center justify-between shrink-0">
-        <div className="flex items-center space-x-2">
-          <GitFork className="w-4 h-4 text-cyan-400" />
-          <span className="font-bold text-slate-100 uppercase text-[11px] font-sans">LangGraph Live Node State Machine</span>
+    <div className="flex-1 flex flex-col h-full bg-paper text-ink overflow-hidden">
+      <div className="bg-paper-raised border-b border-rule px-4 py-3 shrink-0 flex items-center justify-between gap-4">
+        <div className="min-w-0">
+          <h2 className="text-label font-medium text-ink">Pipeline</h2>
+          {str(job.id) ? (
+            <p className="text-micro text-ink-faint font-mono truncate mt-0.5">{str(job.id)}</p>
+          ) : null}
         </div>
-        <div className="text-[10px] text-slate-500 font-mono">
-          Click any node to inspect Input payloads, prompts & Outputs in the inspector.
-        </div>
+        {nodes.length > 0 && (
+          <p className="text-micro text-ink-faint font-mono shrink-0">
+            {completed}/{nodes.length} complete{failed > 0 ? ` · ${failed} failed` : ''}
+          </p>
+        )}
       </div>
 
-      {/* Pipeline execution canvas */}
-      <div className="flex-1 p-6 overflow-auto flex flex-col items-center justify-start bg-[radial-gradient(#1e293b_1px,transparent_1px)] [background-size:18px_18px] py-10">
-        <div className="w-full max-w-3xl space-y-6">
-          <div className="flex items-center justify-between mb-4 border-b border-slate-850 pb-2">
-            <span className="font-bold text-sm text-slate-200 font-sans">Pipeline Sequence Topology</span>
-            <span className="text-slate-500 font-mono">Job: {job.id || 'N/A'} ({job.status})</span>
+      <div className="flex-1 overflow-y-auto px-4 py-4">
+        {nodes.length === 0 ? (
+          <div className="h-full flex flex-col items-center justify-center text-center max-w-md mx-auto py-12">
+            <p className="text-label font-medium text-ink">No pipeline running</p>
+            <p className="text-micro text-ink-muted mt-1.5 leading-relaxed">
+              Start a research run and each stage will appear here as it completes.
+            </p>
           </div>
+        ) : (
+          <ol className="max-w-2xl space-y-1">
+            {nodes.map((node, index) => {
+              const ran = hasRun(node.status);
+              const isCompleted = node.status === 'completed';
+              const isFailed = node.status === 'failed';
+              const isRunning = node.status === 'running';
 
-          {nodes.length === 0 ? (
-            <div className="flex flex-col items-center justify-center p-12 border border-dashed border-slate-850 rounded-lg text-slate-655 bg-slate-950/60 mt-8">
-              <GitFork className="w-8 h-8 text-slate-750 mb-2" />
-              <p className="font-sans text-xs">No active execution telemetry stream found.</p>
-              <p className="font-sans text-[10px] text-slate-600 mt-1">Start a research job from the Research Workspace to view real-time state changes.</p>
-            </div>
-          ) : (
-            <div className="flex flex-col space-y-4">
-              {nodes.map((node, index) => {
-                const isCompleted = node.status === 'completed';
-                const isRunning = node.status === 'running';
-                const isRetrying = node.status === 'retrying';
+              return (
+                <li key={node.id} className="relative">
+                  {/* Connector between stages */}
+                  {index < nodes.length - 1 && (
+                    <span className="absolute left-[11px] top-8 bottom-0 w-px bg-rule" aria-hidden="true" />
+                  )}
 
-                return (
-                  <div key={node.id} className="flex flex-col items-center">
-                    {/* Node Card */}
-                    <div
-                      onClick={() => inspectItem('node', node)}
-                      className={`w-full max-w-xl p-3.5 rounded-lg border transition cursor-pointer relative group flex items-center justify-between ${
+                  <button
+                    type="button"
+                    onClick={() => inspectItem('node', node)}
+                    className={`w-full flex items-center gap-3 rounded-md px-2 py-2.5 text-left transition-colors border ${
+                      isRunning
+                        ? 'bg-paper-inset border-ink/40'
+                        : isFailed
+                        ? 'bg-paper-inset border-rule-strong hover:border-ink'
+                        : 'bg-paper-raised border-transparent hover:border-rule'
+                    }`}
+                  >
+                    {/* The node's state, as a printed-form mark: a filled
+                        square for a stage that ran, a half for one that is
+                        running, an empty one for a failure, and a bare rule
+                        for a stage that has not started. */}
+                    <span
+                      className={`relative z-10 w-[22px] h-[22px] flex items-center justify-center shrink-0 border ${
                         isRunning
-                          ? 'bg-slate-900 border-cyan-500 shadow-md shadow-cyan-500/5 ring-1 ring-cyan-500/30'
+                          ? 'bg-paper-inset border-ink/40 text-ink'
                           : isCompleted
-                          ? 'bg-slate-900/60 border-slate-800/80 hover:border-slate-700'
-                          : 'bg-slate-950/40 border-slate-900 opacity-60 hover:opacity-80'
+                          ? 'bg-paper-inset border-rule-strong text-ink'
+                          : isFailed
+                          ? 'bg-paper-inset border-ink text-ink'
+                          : 'bg-paper border-rule text-ink-faint'
                       }`}
                     >
-                      <div className="flex items-center space-x-3.5 min-w-0">
-                        <div className={`p-1.5 rounded shrink-0 ${
-                          isCompleted ? 'bg-emerald-500/10 text-emerald-400' :
-                          isRunning ? 'bg-cyan-500/10 text-cyan-400 animate-pulse' :
-                          'bg-slate-800 text-slate-500'
-                        }`}>
-                          <GitFork className="w-4 h-4" />
-                        </div>
-                        
-                        <div className="min-w-0">
-                          <h4 className="font-bold text-slate-200 text-xs font-sans group-hover:text-emerald-400 transition truncate">
-                            {node.label}
-                          </h4>
-                          <div className="flex items-center space-x-2 text-[9px] text-slate-500 mt-0.5">
-                            <span className="uppercase">{node.type}</span>
-                            <span>•</span>
-                            <span className="truncate max-w-[200px]">Template: {node.prompt}</span>
-                          </div>
-                        </div>
-                      </div>
+                      {isRunning ? (
+                        <StatusMarkGlyph status="dotted" className="text-ink" />
+                      ) : isCompleted ? (
+                        <StatusMarkGlyph status="filled" className="text-ink" />
+                      ) : isFailed ? (
+                        <StatusMarkGlyph status="empty" className="text-ink" />
+                      ) : (
+                        <GitFork className="w-3 h-3" />
+                      )}
+                    </span>
 
-                      {/* Status / Telemetry badge right side */}
-                      <div className="flex items-center space-x-3 shrink-0">
-                        <div className="text-right text-[9px] text-slate-500 font-mono">
-                          <div>{node.latencyMs > 0 ? `${node.latencyMs}ms` : '0ms'}</div>
-                          <div className="text-emerald-450">${node.tokenCost.toFixed(3)}</div>
-                        </div>
-                        
-                        <span className={`px-1.5 py-0.5 rounded text-[9px] uppercase font-bold ${
-                          isCompleted ? 'bg-emerald-500/10 text-emerald-400 border border-emerald-500/20' :
-                          isRunning ? 'bg-cyan-500/10 text-cyan-400 border border-cyan-500/20 animate-pulse' :
-                          'bg-slate-900 text-slate-600 border border-slate-800'
-                        }`}>
-                          {node.status}
+                    <span className="flex-1 min-w-0">
+                      <span className={`block text-label ${isRunning ? 'text-ink font-medium' : 'text-ink-muted'}`}>
+                        {str(node.label) || str(node.id)}
+                      </span>
+                      <span className="block text-micro text-ink-faint capitalize">{str(node.type)}</span>
+                    </span>
+
+                    {ran && (
+                      <span className="text-right shrink-0">
+                        <span className="block text-micro text-ink-muted font-mono">
+                          {num(node.latencyMs)} ms
                         </span>
-                      </div>
-                    </div>
-
-                    {/* Connecting arrow indicator between nodes */}
-                    {index < nodes.length - 1 && (
-                      <div className="h-6 w-px bg-slate-800 flex items-center justify-center my-0.5">
-                        <ArrowRight className="w-3 h-3 text-slate-700 transform rotate-90" />
-                      </div>
+                        <span className="block text-micro text-ink-faint font-mono">
+                          ${money(node.tokenCost)}
+                        </span>
+                      </span>
                     )}
-                  </div>
-                );
-              })}
-            </div>
-          )}
-        </div>
+
+                    <span
+                      className={`text-micro font-mono px-1.5 py-0.5 rounded-sm shrink-0 capitalize border ${
+                        isRunning
+                          ? 'bg-paper-inset text-ink border-ink/40'
+                          : isCompleted
+                          ? 'bg-paper-inset text-ink border-rule-strong'
+                          : isFailed
+                          ? 'bg-paper-inset text-ink border-ink'
+                          : 'bg-paper text-ink-faint border-rule'
+                      }`}
+                    >
+                      {node.status}
+                    </span>
+                  </button>
+                </li>
+              );
+            })}
+          </ol>
+        )}
       </div>
     </div>
   );

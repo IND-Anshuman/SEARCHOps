@@ -20,20 +20,26 @@ import {
   VectorChunk,
   RedisEventLog,
   ResearchReport,
+  EvidenceGap,
 } from '../types/workbench';
 import type { ResearchConfig } from '../types/researchConfig';
+import {
+  normalizeJob,
+  normalizeNodes,
+  normalizeEntities,
+  normalizeEdges,
+  normalizeChunks,
+  normalizeLogs,
+  normalizeReport,
+} from '../lib/normalize';
 
-export const API_BASE = import.meta.env.VITE_API_BASE_URL ?? 'http://localhost:8000';
-export const API_KEY = import.meta.env.VITE_API_KEY ?? '';
+import { obj, str, num } from '../lib/safe';
 
-if (!API_KEY && import.meta.env.DEV) {
-  console.warn('[executionStore] VITE_API_KEY is not set. API requests will fail auth. Add it to frontend/.env.local');
-}
+import { API_BASE, apiFetch } from '../lib/api';
 
-const authHeaders = () => ({
-  'Content-Type': 'application/json',
-  ...(API_KEY ? { 'X-API-Key': API_KEY } : {}),
-});
+export { API_BASE };
+
+const jsonHeaders = () => ({ 'Content-Type': 'application/json' });
 
 export interface ExecutionState {
   job: ResearchJob;
@@ -44,6 +50,7 @@ export interface ExecutionState {
   chunks: VectorChunk[];
   logs: RedisEventLog[];
   report: ResearchReport | null;
+  gaps: EvidenceGap[];
   connectionStatus: 'connected' | 'connecting' | 'disconnected';
 }
 
@@ -68,6 +75,7 @@ let _state: ExecutionState = {
   chunks: [],
   logs: [],
   report: null,
+  gaps: [],
   connectionStatus: 'disconnected',
 };
 
@@ -109,125 +117,135 @@ export const executionStore = {
       chunks: [],
       logs: [],
       report: null,
+      gaps: [],
       connectionStatus: 'connecting',
     };
     _emit();
   },
 
   applyUpdate(data: Record<string, unknown>): void {
+    // A malformed frame must not be able to blank the UI. If it is not an
+    // object we cannot read, drop it rather than throwing inside the store.
+    if (data === null || typeof data !== 'object' || Array.isArray(data)) return;
+
     // Guard: only apply updates for the active job
     if (data.job_id && data.job_id !== _state.job.id) return;
 
-    const job: ResearchJob = {
+    // Every field is coerced, so no view is ever handed an absent one. This
+    // is what makes a partial WS frame survivable.
+    const job = normalizeJob({
       ..._state.job,
       status: (data.status as ResearchJob['status']) ?? _state.job.status,
-      tokenUsed: (data.token_used as number) ?? _state.job.tokenUsed,
-      costCurrent: (data.cost_current as number) ?? _state.job.costCurrent,
-      progress: (data.progress as number) ?? _state.job.progress,
-      completedAt: (data.completed_at as string) ?? _state.job.completedAt,
-    };
+      token_used: data.token_used,
+      cost_current: data.cost_current,
+      progress: data.progress,
+      completed_at: data.completed_at,
+      query: data.query ?? _state.job.topic,
+      depth: data.depth ?? _state.job.depth,
+    });
 
-    // Derive animated edges from node topology
-    const rawNodes = (data.nodes as LangGraphNode[] | undefined) ?? _state.nodes;
+    const rawNodes = (data.nodes as unknown[] | undefined) ?? _state.nodes;
+    const nodes: LangGraphNode[] = normalizeNodes(rawNodes);
+
     const edges: LangGraphEdge[] = [];
-    for (let i = 0; i < rawNodes.length - 1; i++) {
+    for (let i = 0; i < nodes.length - 1; i++) {
       edges.push({
-        id: `e_${rawNodes[i].id}_${rawNodes[i + 1].id}`,
-        source: rawNodes[i].id,
-        target: rawNodes[i + 1].id,
-        animated: rawNodes[i].status === 'completed' && rawNodes[i + 1].status === 'running',
+        id: `e_${nodes[i].id}_${nodes[i + 1].id}`,
+        source: nodes[i].id,
+        target: nodes[i + 1].id,
+        animated: nodes[i].status === 'completed' && nodes[i + 1].status === 'running',
       });
     }
 
-    // Map knowledge graph entities
     const entities: KnowledgeEntity[] = data.entities
-      ? (data.entities as Array<Record<string, unknown>>).map(e => ({
-          id: e.id as string,
-          canonicalId: (e.canonical_id as string) ?? '',
-          name: e.name as string,
-          type: (e.entity_type as string) ?? 'technology',
-          summary: (e.description as string) ?? '',
-        }))
+      ? normalizeEntities(data.entities)
       : _state.entities;
 
-    // Map knowledge graph edges
     const graphEdges: KnowledgeEdge[] = data.relations
-      ? (data.relations as Array<Record<string, unknown>>).map((r, idx) => ({
-          id: (r.id as string) ?? `e_${idx}`,
-          source: (r.source_canonical_id as string) ?? (r.source_id as string) ?? '',
-          target: (r.target_canonical_id as string) ?? (r.target_id as string) ?? '',
-          relation_type: (r.relation_type as string) ?? 'RELATED_TO',
-          description: (r.description as string) ?? '',
-        }))
+      ? normalizeEdges(data.relations)
       : _state.graphEdges;
 
-    // Map vector chunks (backend uses snake_case field names)
     const chunks: VectorChunk[] = data.chunks
-      ? (data.chunks as Array<Record<string, unknown>>).map(c => ({
-          id: c.id as string,
-          documentTitle: (c.document_title as string) ?? (c.documentTitle as string) ?? '',
-          sourceUrl: (c.source_url as string) ?? (c.sourceUrl as string) ?? '',
-          similarityScore: (c.similarity_score as number) ?? (c.similarityScore as number) ?? 0,
-          tokenCount: (c.token_count as number) ?? (c.tokenCount as number) ?? 0,
-          chunkPreview: (c.chunk_preview as string) ?? (c.chunkPreview as string) ?? '',
-        }))
+      ? normalizeChunks(data.chunks)
       : _state.chunks;
 
-    // Map logs
-    const logs: RedisEventLog[] = data.logs
-      ? (data.logs as Array<Record<string, unknown>>).map(l => ({
-          id: l.id as string,
-          stream: (l.stream as string) ?? '',
-          eventType: (l.event_type as string) ?? (l.eventType as string) ?? '',
-          correlationId: (l.correlation_id as string) ?? (l.correlationId as string) ?? '',
-          timestamp: l.timestamp as string,
-          payload: (l.payload as Record<string, unknown>) ?? {},
-          level: (l.level as RedisEventLog['level']) ?? 'info',
-        }))
-      : _state.logs;
+    const logs: RedisEventLog[] = data.logs ? normalizeLogs(data.logs) : _state.logs;
 
     // Build report from final_report if present
     let report = _state.report;
-    if (data.final_report && typeof data.final_report === 'string' && data.final_report.length > 0) {
-      report = {
-        id: _state.job.id,
-        title: _state.job.topic,
-        generatedAt: (data.completed_at as string) ?? new Date().toISOString(),
-        summary: `Synthesized report on: ${_state.job.topic}`,
-        markdownContent: data.final_report,
-        sourcesCount: (data.source_count as number) ?? 0,
-        entitiesCount: (data.entity_count as number) ?? 0,
-        citations: (data.citations as string[]) ?? [],
-        // Honest provenance. When the report was synthesised from evidence
-        // (model refusal / empty reply) the UI must say so rather than showing
-        // it as a normal model report.
-        quality: (data.report_quality as string) ?? undefined,
-        userMessage: (data.report_user_message as string) ?? undefined,
-      };
-    }
+    const built = normalizeReport(_state.job.id, _state.job.topic, data, _state.job.completedAt);
+    if (built) report = built;
 
-    _state = { ..._state, job, nodes: rawNodes, edges, entities, graphEdges, chunks, logs, report };
+    const rawGaps = (data.evidence_gaps ?? data.gaps) as unknown[];
+    const gaps: EvidenceGap[] = Array.isArray(rawGaps)
+      ? rawGaps.map(g => {
+          const go = obj(g);
+          return {
+            description: str(go.description),
+            targetQuery: str(go.targetQuery || go.target_query),
+            priority: num(go.priority, 1),
+          };
+        })
+      : _state.gaps;
+
+    _state = { ..._state, job, nodes, edges, entities, graphEdges, chunks, logs, report, gaps };
     _emit();
   },
 
   hydrateFromRest(jobId: string, jobData: Record<string, unknown>): void {
-    const job: ResearchJob = {
+    const d = obj(jobData);
+    // Read the whole payload through the normalisers so the hydrated state is
+    // identical in shape to the live-updated state.
+    const job = normalizeJob({
+      ...d,
+      job_id: jobId,
       id: jobId,
-      topic: (jobData.query as string) ?? '',
-      status: (jobData.status as ResearchJob['status']) ?? 'idle',
-      depth: (jobData.depth as ResearchJob['depth']) ?? 'standard',
-      tokenBudget: (jobData.token_budget as number) ?? 150000,
-      tokenUsed: (jobData.token_used as number) ?? 0,
-      costBudget: (jobData.cost_budget as number) ?? 5.0,
-      costCurrent: (jobData.cost_current as number) ?? 0.0,
-      startTime: (jobData.created_at as string) ?? '',
-      completedAt: jobData.completed_at as string | undefined,
-      progress: (jobData.progress as number) ?? 0,
+      query: d.query,
+      created_at: d.created_at,
+      start_time: d.start_time,
+      status: d.status,
+    });
+
+    const rawGaps = (d.evidence_gaps ?? d.gaps) as unknown[];
+    const gaps: EvidenceGap[] = Array.isArray(rawGaps)
+      ? rawGaps.map(g => {
+          const go = obj(g);
+          return {
+            description: str(go.description),
+            targetQuery: str(go.targetQuery || go.target_query),
+            priority: num(go.priority, 1),
+          };
+        })
+      : [];
+
+    _state = {
+      ..._state,
+      job,
+      nodes: normalizeNodes(d.nodes),
+      edges: [],
+      entities: normalizeEntities(d.entities),
+      graphEdges: normalizeEdges(d.relations),
+      chunks: normalizeChunks(d.chunks),
+      logs: normalizeLogs(d.logs),
+      gaps,
     };
-    _state = { ..._state, job };
+
+    const report = normalizeReport(jobId, job.topic, d, job.completedAt);
+    _state = { ..._state, report };
+
+    // Derive the connecting edges the same way applyUpdate does.
+    const edges: LangGraphEdge[] = [];
+    for (let i = 0; i < _state.nodes.length - 1; i++) {
+      edges.push({
+        id: `e_${_state.nodes[i].id}_${_state.nodes[i + 1].id}`,
+        source: _state.nodes[i].id,
+        target: _state.nodes[i + 1].id,
+        animated: false,
+      });
+    }
+    _state = { ..._state, edges };
+
     _emit();
-    // Apply the full data as an update to populate nodes/entities/chunks/logs/report
-    executionStore.applyUpdate({ ...jobData, job_id: jobId });
   },
 
   // ── API actions ────────────────────────────────────────────────────────
@@ -240,8 +258,12 @@ export const executionStore = {
     if (depth === 'quick') mappedDepth = 'shallow';
     else if (depth === 'exhaustive' || depth === 'deep') mappedDepth = 'deep';
 
+    // "Exhaustive" is deep reflection with a wider net: more sources per
+    // query. It used to send exactly what "deep" sent.
+    const maxSources = depth === 'exhaustive' ? 25 : depth === 'deep' ? 15 : 10;
+
     // The config travels as snake_case — the API schema is the contract.
-    const body: Record<string, unknown> = { query, depth: mappedDepth, max_sources: 10 };
+    const body: Record<string, unknown> = { query, depth: mappedDepth, max_sources: maxSources };
     if (config) {
       body.config = {
         max_pages: config.maxPages,
@@ -250,12 +272,20 @@ export const executionStore = {
         verify_sampling_rate: config.verifySamplingRate,
         max_report_sections: config.maxReportSections,
         scrape_budget: config.scrapeBudget,
+        target_pages: config.targetPages,
+        report_theme: config.reportTheme,
+        report_type: config.reportType,
+        report_structure_prompt: config.reportStructurePrompt,
       };
     }
+    body.target_pages = config?.targetPages ?? 12;
+    body.report_theme = config?.reportTheme ?? 'default';
+    if (config?.reportType) body.report_type = config.reportType;
+    if (config?.reportStructurePrompt) body.report_structure_prompt = config.reportStructurePrompt;
 
-    const resp = await fetch(`${API_BASE}/api/v1/research/`, {
+    const resp = await apiFetch(`${API_BASE}/api/v1/research/`, {
       method: 'POST',
-      headers: authHeaders(),
+      headers: jsonHeaders(),
       body: JSON.stringify(body),
     });
     if (!resp.ok) {
@@ -274,16 +304,20 @@ export const executionStore = {
 
   async loadJob(jobId: string): Promise<void> {
     try {
-      const resp = await fetch(`${API_BASE}/api/v1/research/${jobId}`, {
-        headers: authHeaders(),
+      const resp = await apiFetch(`${API_BASE}/api/v1/research/${jobId}`, {
+        headers: jsonHeaders(),
       });
       if (!resp.ok) {
+        // A job that no longer exists is not an error the user needs a stack
+        // trace for — drop the stale id and leave the workspace empty.
         localStorage.removeItem('searchops:active_job_id');
         return;
       }
       const jobData = await resp.json() as Record<string, unknown>;
       executionStore.hydrateFromRest(jobId, jobData);
     } catch (err) {
+      // The backend being unreachable must not blank the workspace: keep
+      // whatever is on screen and report it in the console.
       console.error('[executionStore] loadJob failed:', err);
     }
   },
