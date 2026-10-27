@@ -4,17 +4,15 @@ Unit tests for BrightDataSerpProvider.
 All tests use mocked httpx to avoid real API calls.
 Run: uv run pytest tests/unit/search/providers/test_brightdata_serp.py -v
 """
+
 from __future__ import annotations
 
+import httpx
 import pytest
 import respx
-import httpx
-from unittest.mock import patch
 
-from searchops.search.providers.brightdata_serp import BrightDataSerpProvider
 from searchops.search.contracts import SearchQuery
-from searchops.search.domain.models import SearchProfile
-
+from searchops.search.providers.brightdata_serp import BrightDataSerpProvider
 
 BD_SERP_API_URL = "https://api.brightdata.com/serp/req"
 
@@ -60,6 +58,7 @@ def provider_with_key(monkeypatch):
     monkeypatch.setenv("BRIGHTDATA_ZONE_SERP", "serp")
     # Clear settings cache to pick up monkeypatched env vars
     from searchops.config.settings import get_settings
+
     get_settings.cache_clear()
     provider = BrightDataSerpProvider()
     yield provider
@@ -71,6 +70,7 @@ def provider_no_key(monkeypatch):
     """Provider without an API key."""
     monkeypatch.delenv("BRIGHTDATA_API_KEY", raising=False)
     from searchops.config.settings import get_settings
+
     get_settings.cache_clear()
     provider = BrightDataSerpProvider()
     yield provider
@@ -81,9 +81,7 @@ def provider_no_key(monkeypatch):
 @respx.mock
 async def test_search_returns_organic_results(provider_with_key):
     """Should return normalized SearchResultItems from organic SERP results."""
-    respx.post(BD_SERP_API_URL).mock(
-        return_value=httpx.Response(200, json=MOCK_SERP_RESPONSE)
-    )
+    respx.post(BD_SERP_API_URL).mock(return_value=httpx.Response(200, json=MOCK_SERP_RESPONSE))
     query = SearchQuery(query="langgraph framework", max_results=10)
     results = await provider_with_key.search(query)
 
@@ -98,9 +96,7 @@ async def test_search_returns_organic_results(provider_with_key):
 @respx.mock
 async def test_paa_subqueries_in_metadata(provider_with_key):
     """PAA questions should be stored in raw_metadata of each result."""
-    respx.post(BD_SERP_API_URL).mock(
-        return_value=httpx.Response(200, json=MOCK_SERP_RESPONSE)
-    )
+    respx.post(BD_SERP_API_URL).mock(return_value=httpx.Response(200, json=MOCK_SERP_RESPONSE))
     query = SearchQuery(query="langgraph", max_results=10)
     results = await provider_with_key.search(query)
 
@@ -114,9 +110,7 @@ async def test_paa_subqueries_in_metadata(provider_with_key):
 @respx.mock
 async def test_knowledge_graph_in_metadata(provider_with_key):
     """Knowledge Graph card should be stored in raw_metadata."""
-    respx.post(BD_SERP_API_URL).mock(
-        return_value=httpx.Response(200, json=MOCK_SERP_RESPONSE)
-    )
+    respx.post(BD_SERP_API_URL).mock(return_value=httpx.Response(200, json=MOCK_SERP_RESPONSE))
     query = SearchQuery(query="langgraph", max_results=10)
     results = await provider_with_key.search(query)
 
@@ -137,9 +131,7 @@ async def test_search_missing_key_returns_empty(provider_no_key):
 @respx.mock
 async def test_search_api_error_returns_empty(provider_with_key):
     """Non-200 API response should return empty list without raising."""
-    respx.post(BD_SERP_API_URL).mock(
-        return_value=httpx.Response(500, text="Internal Server Error")
-    )
+    respx.post(BD_SERP_API_URL).mock(return_value=httpx.Response(500, text="Internal Server Error"))
     query = SearchQuery(query="langgraph", max_results=5)
     results = await provider_with_key.search(query)
     assert results == []
@@ -160,6 +152,7 @@ async def test_empty_query_returns_empty(provider_with_key):
 async def test_geo_targeting_country_in_url(provider_with_key):
     """Country code should be included in the Google URL sent to BD SERP API."""
     import json as json_lib
+
     captured_request = None
 
     def capture(req):
@@ -185,8 +178,11 @@ async def test_geo_targeting_country_in_url(provider_with_key):
 def test_provider_capabilities():
     """Provider must declare the expected premium capabilities."""
     from searchops.search.domain.models import SearchCapability
+
     provider = BrightDataSerpProvider.__new__(BrightDataSerpProvider)
-    provider._search_cfg = type("c", (), {"brightdata_api_key": None, "brightdata_zone_serp": "serp", "search_timeout": 30})()
+    provider._search_cfg = type(
+        "c", (), {"brightdata_api_key": None, "brightdata_zone_serp": "serp", "search_timeout": 30}
+    )()
     provider._scraping_cfg = None
     provider._api_key = None
     provider._zone = "serp"

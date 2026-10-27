@@ -35,7 +35,6 @@ from searchops.scraping.stealth import (
     build_stealth_scraper,
 )
 
-
 # ─────────────────────────────────────────────────────────────────────────────
 # Helpers / fixtures
 # ─────────────────────────────────────────────────────────────────────────────
@@ -70,6 +69,7 @@ def _make_mock_session(response: MagicMock) -> MagicMock:
 # ─────────────────────────────────────────────────────────────────────────────
 # StealthConfig tests
 # ─────────────────────────────────────────────────────────────────────────────
+
 
 class TestStealthConfig:
     """Tests for the immutable StealthConfig dataclass."""
@@ -112,6 +112,7 @@ class TestStealthConfig:
 # _chrome124_headers tests
 # ─────────────────────────────────────────────────────────────────────────────
 
+
 class TestChrome124Headers:
     """Tests for the browser-profile header generator."""
 
@@ -150,6 +151,7 @@ class TestChrome124Headers:
 # _mask_proxy tests
 # ─────────────────────────────────────────────────────────────────────────────
 
+
 class TestMaskProxy:
     """Tests for the proxy URL masking utility."""
 
@@ -178,6 +180,7 @@ class TestMaskProxy:
 # ─────────────────────────────────────────────────────────────────────────────
 # StealthHTTPScraper tests
 # ─────────────────────────────────────────────────────────────────────────────
+
 
 class TestStealthHTTPScraper:
     """Tests for the core stealth scraper."""
@@ -229,10 +232,9 @@ class TestStealthHTTPScraper:
     @pytest.mark.asyncio
     @pytest.mark.filterwarnings("ignore::pytest.PytestUnraisableExceptionWarning")
     async def test_scrape_success_200(self) -> None:
-        scraper  = StealthHTTPScraper()
-        request  = ScrapeRequest(url=SAMPLE_URL)
+        scraper = StealthHTTPScraper()
+        request = ScrapeRequest(url=SAMPLE_URL)
         mock_session = _make_mock_session(_make_mock_response(status_code=200, url=SAMPLE_URL))
-
 
         with patch(
             "searchops.scraping.stealth.AsyncSession",
@@ -249,8 +251,8 @@ class TestStealthHTTPScraper:
     @pytest.mark.unit
     @pytest.mark.asyncio
     async def test_scrape_success_sets_impersonate_in_metadata(self) -> None:
-        scraper  = StealthHTTPScraper(impersonate="firefox133")
-        request  = ScrapeRequest(url=SAMPLE_URL)
+        scraper = StealthHTTPScraper(impersonate="firefox133")
+        request = ScrapeRequest(url=SAMPLE_URL)
         mock_session = _make_mock_session(_make_mock_response())
 
         with patch("searchops.scraping.stealth.AsyncSession", return_value=mock_session):
@@ -263,8 +265,8 @@ class TestStealthHTTPScraper:
     @pytest.mark.unit
     @pytest.mark.asyncio
     async def test_scrape_403_returns_no_html(self) -> None:
-        scraper  = StealthHTTPScraper()
-        request  = ScrapeRequest(url=SAMPLE_URL)
+        scraper = StealthHTTPScraper()
+        request = ScrapeRequest(url=SAMPLE_URL)
         mock_session = _make_mock_session(_make_mock_response(status_code=403, text=""))
 
         with patch("searchops.scraping.stealth.AsyncSession", return_value=mock_session):
@@ -277,8 +279,8 @@ class TestStealthHTTPScraper:
     @pytest.mark.unit
     @pytest.mark.asyncio
     async def test_scrape_429_returns_correct_status(self) -> None:
-        scraper  = StealthHTTPScraper()
-        request  = ScrapeRequest(url=SAMPLE_URL)
+        scraper = StealthHTTPScraper()
+        request = ScrapeRequest(url=SAMPLE_URL)
         mock_session = _make_mock_session(_make_mock_response(status_code=429, text=""))
 
         with patch("searchops.scraping.stealth.AsyncSession", return_value=mock_session):
@@ -291,8 +293,8 @@ class TestStealthHTTPScraper:
     @pytest.mark.unit
     @pytest.mark.asyncio
     async def test_scrape_network_exception_returns_500(self) -> None:
-        scraper  = StealthHTTPScraper()
-        request  = ScrapeRequest(url=SAMPLE_URL)
+        scraper = StealthHTTPScraper()
+        request = ScrapeRequest(url=SAMPLE_URL)
         bad_session = MagicMock()
         bad_session.get = AsyncMock(side_effect=ConnectionError("refused"))
         bad_session.__aenter__ = AsyncMock(return_value=bad_session)
@@ -309,8 +311,8 @@ class TestStealthHTTPScraper:
     @pytest.mark.unit
     @pytest.mark.asyncio
     async def test_scrape_timeout_returns_500(self) -> None:
-        scraper  = StealthHTTPScraper()
-        request  = ScrapeRequest(url=SAMPLE_URL, timeout_seconds=1)
+        scraper = StealthHTTPScraper()
+        request = ScrapeRequest(url=SAMPLE_URL, timeout_seconds=1)
         bad_session = MagicMock()
         bad_session.get = AsyncMock(side_effect=TimeoutError("timed out"))
         bad_session.__aenter__ = AsyncMock(return_value=bad_session)
@@ -326,7 +328,7 @@ class TestStealthHTTPScraper:
     @pytest.mark.unit
     @pytest.mark.asyncio
     async def test_scrape_many_returns_list_of_correct_length(self) -> None:
-        scraper  = StealthHTTPScraper()
+        scraper = StealthHTTPScraper()
         requests = [ScrapeRequest(url=f"https://example.com/{i}") for i in range(4)]
         mock_session = _make_mock_session(_make_mock_response())
 
@@ -341,16 +343,18 @@ class TestStealthHTTPScraper:
     async def test_scrape_many_concurrency_is_bounded(self) -> None:
         """Verify semaphore actually limits concurrent scrapes."""
         active: list[int] = [0]
-        peak: list[int]   = [0]
+        peak: list[int] = [0]
 
         async def slow_scrape(req: ScrapeRequest) -> ScrapeResult:
             active[0] += 1
-            peak[0]    = max(peak[0], active[0])
+            peak[0] = max(peak[0], active[0])
             await asyncio.sleep(0.01)
             active[0] -= 1
             return ScrapeResult(
-                url=req.url, final_url=req.url,
-                status_code=200, scrape_mode_used=ScrapeMode.STEALTH_HTTP,
+                url=req.url,
+                final_url=req.url,
+                status_code=200,
+                scrape_mode_used=ScrapeMode.STEALTH_HTTP,
             )
 
         scraper = StealthHTTPScraper()
@@ -393,6 +397,7 @@ class TestStealthHTTPScraper:
 # ProxyRouter tests
 # ─────────────────────────────────────────────────────────────────────────────
 
+
 class TestProxyRouter:
     """Tests for the Tier 0b proxy-routing wrapper."""
 
@@ -416,7 +421,7 @@ class TestProxyRouter:
     @pytest.mark.unit
     @pytest.mark.asyncio
     async def test_proxy_url_passed_to_session(self) -> None:
-        router  = ProxyRouter(proxy_url=self.PROXY)
+        router = ProxyRouter(proxy_url=self.PROXY)
         request = ScrapeRequest(url=SAMPLE_URL)
         captured_proxies: dict[str, Any] = {}
 
@@ -440,6 +445,7 @@ class TestProxyRouter:
 # ─────────────────────────────────────────────────────────────────────────────
 # Factory helper tests
 # ─────────────────────────────────────────────────────────────────────────────
+
 
 class TestFactoryHelpers:
     """Tests for build_stealth_scraper and build_proxy_router."""
@@ -479,9 +485,9 @@ class TestFactoryHelpers:
         proxy_secret.get_secret_value.return_value = "http://u:p@proxy.com:823"
 
         settings = MagicMock()
-        settings.proxy_enabled        = True
-        settings.proxy_url_tier1      = proxy_secret
-        settings.stealth_impersonate  = "chrome124"
+        settings.proxy_enabled = True
+        settings.proxy_url_tier1 = proxy_secret
+        settings.stealth_impersonate = "chrome124"
         settings.proxy_connect_timeout = 10.0
 
         result = build_proxy_router(settings)
@@ -491,9 +497,9 @@ class TestFactoryHelpers:
     @pytest.mark.unit
     def test_build_proxy_router_uses_plain_string_url(self) -> None:
         settings = MagicMock()
-        settings.proxy_enabled        = True
-        settings.proxy_url_tier1      = "http://u:p@proxy.com:823"  # plain str, not SecretStr
-        settings.stealth_impersonate  = "chrome124"
+        settings.proxy_enabled = True
+        settings.proxy_url_tier1 = "http://u:p@proxy.com:823"  # plain str, not SecretStr
+        settings.stealth_impersonate = "chrome124"
         settings.proxy_connect_timeout = 10.0
 
         result = build_proxy_router(settings)
@@ -504,6 +510,7 @@ class TestFactoryHelpers:
 # ─────────────────────────────────────────────────────────────────────────────
 # ScrapeMode enum regression tests
 # ─────────────────────────────────────────────────────────────────────────────
+
 
 class TestScrapeModeEnum:
     """Verify new ScrapeMode values exist and serialise correctly."""
@@ -522,15 +529,16 @@ class TestScrapeModeEnum:
 
     @pytest.mark.unit
     def test_existing_modes_unchanged(self) -> None:
-        assert ScrapeMode.FIRECRAWL  == "firecrawl"
+        assert ScrapeMode.FIRECRAWL == "firecrawl"
         assert ScrapeMode.PLAYWRIGHT == "playwright"
-        assert ScrapeMode.HTTP       == "http"
-        assert ScrapeMode.AUTO       == "auto"
+        assert ScrapeMode.HTTP == "http"
+        assert ScrapeMode.AUTO == "auto"
 
 
 # ─────────────────────────────────────────────────────────────────────────────
 # ScrapingPipeline integration tests (stealth tier wiring)
 # ─────────────────────────────────────────────────────────────────────────────
+
 
 class TestScrapingPipelineStealthIntegration:
     """
@@ -545,8 +553,15 @@ class TestScrapingPipelineStealthIntegration:
 
         async def _ok(req: ScrapeRequest) -> ScrapeResult:
             return ScrapeResult(
-                url=req.url, final_url=req.url,
-                status_code=200, html=SAMPLE_HTML,
+                url=req.url,
+                final_url=req.url,
+                status_code=200,
+                html=(
+                    "<html><body><h1>Hello</h1><p>Vector databases store "
+                    "embeddings and support approximate nearest neighbour search, "
+                    "forming the retrieval backbone of modern RAG systems.</p>"
+                    "</body></html>"
+                ),
                 scrape_mode_used=mode,
             )
 
@@ -562,7 +577,8 @@ class TestScrapingPipelineStealthIntegration:
 
         async def _fail(req: ScrapeRequest) -> ScrapeResult:
             return ScrapeResult(
-                url=req.url, final_url=req.url,
+                url=req.url,
+                final_url=req.url,
                 status_code=status,
                 scrape_mode_used=mode,
             )
@@ -578,13 +594,13 @@ class TestScrapingPipelineStealthIntegration:
         from searchops.scraping.rate_limiter import DomainRateLimiter
 
         rate_limiter = MagicMock(spec=DomainRateLimiter)
-        rate_limiter.check         = AsyncMock(return_value=(True, 0.0))
+        rate_limiter.check = AsyncMock(return_value=(True, 0.0))
         rate_limiter.record_response = AsyncMock()
         rate_limiter.get_all_stats = MagicMock(return_value={})
 
         playwright_mock = MagicMock()
         playwright_mock.scrape = AsyncMock()  # should NOT be called
-        playwright_mock.pool   = MagicMock(stats={})
+        playwright_mock.pool = MagicMock(stats={})
 
         pipeline = ScrapingPipeline(
             stealth=self._make_success_scraper(),
@@ -605,9 +621,9 @@ class TestScrapingPipelineStealthIntegration:
         from searchops.scraping.rate_limiter import DomainRateLimiter
 
         rate_limiter = MagicMock(spec=DomainRateLimiter)
-        rate_limiter.check           = AsyncMock(return_value=(True, 0.0))
+        rate_limiter.check = AsyncMock(return_value=(True, 0.0))
         rate_limiter.record_response = AsyncMock()
-        rate_limiter.get_all_stats   = MagicMock(return_value={})
+        rate_limiter.get_all_stats = MagicMock(return_value={})
 
         proxy_success = self._make_success_scraper(ScrapeMode.STEALTH_HTTP)
 
@@ -649,8 +665,10 @@ class TestScrapingPipelineStealthIntegration:
         pipeline = ScrapingPipeline(rate_limiter=rate_limiter)
 
         result = ScrapeResult(
-            url=SAMPLE_URL, final_url=SAMPLE_URL,
-            status_code=200, html=SAMPLE_HTML,
+            url=SAMPLE_URL,
+            final_url=SAMPLE_URL,
+            status_code=200,
+            html=SAMPLE_HTML,
             scrape_mode_used=ScrapeMode.STEALTH_HTTP,
         )
         pruned = pipeline._prune_if_needed(result)
@@ -669,8 +687,11 @@ class TestScrapingPipelineStealthIntegration:
 
         existing_md = "# Already Markdown"
         result = ScrapeResult(
-            url=SAMPLE_URL, final_url=SAMPLE_URL,
-            status_code=200, html=SAMPLE_HTML, markdown=existing_md,
+            url=SAMPLE_URL,
+            final_url=SAMPLE_URL,
+            status_code=200,
+            html=SAMPLE_HTML,
+            markdown=existing_md,
             scrape_mode_used=ScrapeMode.STEALTH_HTTP,
         )
         unchanged = pipeline._prune_if_needed(result)

@@ -35,11 +35,11 @@ pytestmark = pytest.mark.unit
 # ── Capability eligibility ──────────────────────────────────────────────────
 
 
-def test_playwright_provider_is_eligible_for_deep_profile():
-    """DEEP requires semantic+keyword+metadata; the free provider must qualify."""
+def test_playwright_provider_is_keyword_only():
+    """Playwright is a keyword fallback, not semantic — it must not claim SEMANTIC."""
     provider = PlaywrightSearchProvider()
-    required = {SearchCapability.SEMANTIC, SearchCapability.KEYWORD, SearchCapability.METADATA}
-    assert required.issubset(provider.capabilities)
+    assert SearchCapability.KEYWORD in provider.capabilities
+    assert SearchCapability.SEMANTIC not in provider.capabilities
 
 
 def test_searxng_provider_is_eligible_for_deep_profile():
@@ -58,7 +58,9 @@ def test_free_providers_resolve_for_a_deep_query():
     caps = policy_engine.apply_profile(q)
     resolved = {p.name for p in registry.resolve_by_capabilities(caps)}
 
-    assert "playwright" in resolved, "key-free browser fallback was filtered out"
+    # Playwright no longer claims SEMANTIC, so it is not eligible for DEEP.
+    # SearXNG (which does claim SEMANTIC) remains the key-free fallback.
+    assert "playwright" not in resolved, "playwright should not be eligible for DEEP"
     assert "searxng" in resolved, "key-free SearXNG fallback was filtered out"
 
 

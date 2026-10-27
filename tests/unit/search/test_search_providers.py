@@ -32,7 +32,11 @@ async def test_serper_search_provider_success():
             200,
             json={
                 "organic": [
-                    {"title": "Test Title", "link": "https://example.com", "snippet": "Test snippet"}
+                    {
+                        "title": "Test Title",
+                        "link": "https://example.com",
+                        "snippet": "Test snippet",
+                    }
                 ]
             },
         )
