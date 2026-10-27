@@ -48,7 +48,7 @@ def build_glossary(doc: ReportDocument, *, max_terms: int = _MAX_TERMS) -> list[
 
     ordered = sorted(
         doc.entities,
-        key=lambda e: float(_field(e, "confidence", 0.0) or 0.0),
+        key=lambda e: float(_field(e, "confidence", 0.0, "confidence_score") or 0.0),
         reverse=True,
     )
 
@@ -63,8 +63,8 @@ def build_glossary(doc: ReportDocument, *, max_terms: int = _MAX_TERMS) -> list[
         entries.append(
             GlossaryEntry(
                 term=name[:120],
-                entity_type=str(_field(entity, "entity_type", "") or "")[:60],
-                definition=str(_field(entity, "description", "") or "").strip()[:400],
+                entity_type=str(_field(entity, "entity_type", "", "type") or "")[:60],
+                definition=str(_field(entity, "description", "", "summary") or "").strip()[:400],
             )
         )
         if len(entries) >= max_terms:
