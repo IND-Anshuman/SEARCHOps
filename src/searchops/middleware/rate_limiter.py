@@ -7,6 +7,7 @@ sliding window rate limits per client IP or API Key.
 
 from __future__ import annotations
 
+import hashlib
 import time
 from typing import TYPE_CHECKING, Any
 
@@ -18,6 +19,8 @@ if TYPE_CHECKING:
     from starlette.requests import Request
 
 log = structlog.get_logger(__name__)
+
+_MAX_TRACKED_KEYS = 10_000
 
 
 class RedisSlidingWindowRateLimiter:
@@ -54,6 +57,10 @@ class RedisSlidingWindowRateLimiter:
         if key not in self._memory_store:
             self._memory_store[key] = []
 
+        # Bound the table: a stream of one-off client addresses must not grow it forever.
+        if len(self._memory_store) > _MAX_TRACKED_KEYS:
+            self._memory_store = {k: ts for k, ts in self._memory_store.items() if ts and ts[-1] > clear_before}
+
         timestamps = [t for t in self._memory_store[key] if t > clear_before]
         timestamps.append(now)
         self._memory_store[key] = timestamps
@@ -64,12 +71,29 @@ class RedisSlidingWindowRateLimiter:
         return allowed, remaining, self.limit
 
 
+def _client_key(request: Request) -> str:
+    """Who the budget belongs to: the signed-in user, else the API-key holder,
+    else the client address. The key is hashed, never stored or logged raw."""
+    principal = getattr(request.state, "principal", None)
+    user_id = str(getattr(principal, "user_id", "") or "")
+    if user_id:
+        return f"user:{user_id}"
+    api_key = request.headers.get("X-API-Key")
+    if api_key:
+        return "key:" + hashlib.sha256(api_key.encode()).hexdigest()[:16]
+    return f"ip:{request.client.host if request.client else 'unknown'}"
+
+
 class RateLimiterMiddleware(BaseHTTPMiddleware):
     """Starlette middleware enforcing rate limiting."""
 
     def __init__(self, app: Any, rate_limiter: RedisSlidingWindowRateLimiter | None = None) -> None:
         super().__init__(app)
-        self.rate_limiter = rate_limiter or RedisSlidingWindowRateLimiter()
+        if rate_limiter is None:
+            from searchops.config.settings import get_settings
+
+            rate_limiter = RedisSlidingWindowRateLimiter(limit=get_settings().security.rate_limit_requests_per_minute)
+        self.rate_limiter = rate_limiter
 
     async def dispatch(self, request: Request, call_next: RequestResponseEndpoint) -> Response:
         path = request.url.path
@@ -82,7 +106,7 @@ class RateLimiterMiddleware(BaseHTTPMiddleware):
         ):
             return await call_next(request)
 
-        client_key = request.headers.get("X-API-Key") or (request.client.host if request.client else "unknown")
+        client_key = _client_key(request)
         allowed, remaining, limit = await self.rate_limiter.is_allowed(client_key)
 
         if not allowed:
