@@ -9,7 +9,9 @@ import {
   Scissors,
   Sparkles,
 } from 'lucide-react';
-import { API_BASE, API_KEY } from '../shared/store/executionStore';
+import { API_BASE } from '../shared/store/executionStore';
+import { apiFetch } from '../shared/lib/api';
+import { ReportMarkdown, sourcesFromLines, type SourceRef } from './ReportMarkdown';
 
 export interface ReportBlockData {
   id: string;
@@ -70,12 +72,9 @@ export const BlockEditor: React.FC<BlockEditorProps> = ({ jobId, doc, onDocument
       setPending(op);
       setNotice('');
       try {
-        const res = await fetch(`${API_BASE}/api/v1/research/${jobId}/blocks/${blockId}/op`, {
+        const res = await apiFetch(`${API_BASE}/api/v1/research/${jobId}/blocks/${blockId}/op`, {
           method: 'POST',
-          headers: {
-            'Content-Type': 'application/json',
-            ...(API_KEY ? { 'X-API-Key': API_KEY } : {}),
-          },
+          headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify({ op, at_char: atChar }),
         });
         if (!res.ok) {
@@ -130,19 +129,20 @@ export const BlockEditor: React.FC<BlockEditorProps> = ({ jobId, doc, onDocument
   if (!doc) return null;
 
   const blocks = doc.blocks.filter((b) => !b.hidden);
+  const sources = sourceRegistry(doc.blocks);
 
   return (
-    <div ref={containerRef} className="relative flex-1 overflow-y-auto p-6 max-w-4xl mx-auto w-full">
+    <div ref={containerRef} className="prose report-doc relative flex-1 overflow-y-auto py-2 mx-auto w-full">
       {notice ? (
         <div
           role="status"
-          className="mb-3 border border-amber-500/30 bg-amber-500/5 rounded px-3 py-2 text-[11px] text-amber-200 font-sans"
+          className="mb-3 border border-rule-strong bg-paper-inset rounded px-3 py-2 text-micro text-ink"
         >
           {notice}
           <button
             type="button"
             onClick={() => setNotice('')}
-            className="ml-2 text-amber-400/70 hover:text-amber-200"
+            className="ml-2 text-ink-muted hover:text-ink"
             aria-label="Dismiss"
           >
             ×
@@ -157,11 +157,11 @@ export const BlockEditor: React.FC<BlockEditorProps> = ({ jobId, doc, onDocument
           data-origin={block.origin}
           className={`group relative ${
             block.origin === 'deepened' || block.origin === 'condensed'
-              ? 'border-l-2 border-violet-500/40 pl-3'
+              ? 'border-l border-rule-strong pl-3'
               : ''
-          }`}
+          } ${isFirstParagraph(block, blocks) ? 'dropcap' : ''}`}
         >
-          {renderBlock(block)}
+          {renderBlock(block, sources)}
 
           {/* Per-block controls. Hidden until hover so the report stays readable. */}
           {block.kind !== 'source' ? (
@@ -208,7 +208,7 @@ export const BlockEditor: React.FC<BlockEditorProps> = ({ jobId, doc, onDocument
           className="absolute z-20 -translate-x-1/2 -translate-y-full pb-2"
           style={{ left: menu.x, top: menu.y }}
         >
-          <div className="flex items-center gap-1 bg-slate-900 border border-slate-700 rounded-lg shadow-xl px-1 py-1">
+          <div className="flex items-center gap-1 bg-paper-inset border border-rule-strong rounded-lg shadow-xl px-1 py-1">
             <MenuBtn
               title="Shorten to its key points"
               busy={pending === 'condense'}
@@ -266,50 +266,85 @@ function selectionOffsetIn(blockId: string): number | null {
   return pre.toString().length;
 }
 
-function renderBlock(block: ReportBlockData): React.ReactNode {
+/**
+ * Is this the document's first paragraph?
+ *
+ * The drop cap belongs to the first paragraph of a typeset document, which is
+ * usually the first paragraph of the first section — not the first block.
+ * Each block is its own wrapper, so a CSS `:first-of-type` can never reach it;
+ * the block has to be identified here.
+ */
+function isFirstParagraph(block: ReportBlockData, blocks: ReportBlockData[]): boolean {
+  if (block.kind !== 'paragraph') return false;
+  // The italic standfirst under the title is not the opening of the text.
+  const visible = blocks.filter((b) => !b.hidden && !/^_[^_].*_$/s.test(b.text.trim()));
+  const first = visible.find((b) => b.kind === 'paragraph');
+  return first?.id === block.id;
+}
+
+function sourceRegistry(blocks: ReportBlockData[]): Map<number, SourceRef> {
+  return sourcesFromLines(blocks.filter((b) => b.kind === 'source' || b.kind === 'list').map((b) => b.text));
+}
+
+function renderBlock(block: ReportBlockData, sources: Map<number, SourceRef> = new Map()): React.ReactNode {
   switch (block.kind) {
     case 'heading': {
       const level = Math.min(Math.max(block.level ?? 2, 1), 4);
       const Tag = (`h${level}` as unknown) as keyof JSX.IntrinsicElements;
-      const tone =
-        level === 1
-          ? 'text-lg font-bold text-emerald-400 border-b border-slate-800 pb-2 pt-4'
-          : level === 2
-            ? 'text-base font-bold text-cyan-400 pt-3 pb-1'
-            : 'text-sm font-bold text-indigo-400 pt-2';
-      return <Tag className={`${tone} font-sans tracking-tight`}>{block.text.replace(/^#+\s*/, '')}</Tag>;
+      // The .prose stylesheet sets headings (display face, ruled section
+      // heads, more space above than below), so no per-level classes here.
+      const title = block.text.replace(/^#+\s*/, '').replace(/\*\*/g, '');
+      // The id matches the contents rail's slug so its links scroll here.
+      const id = title.toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/(^-|-$)/g, '');
+      return <Tag id={id}>{title}</Tag>;
     }
+    case 'paragraph':
     case 'list':
-      return (
-        <ul className="list-disc pl-5 space-y-1 text-slate-300 text-sm font-sans my-2">
-          {block.text
-            .split('\n')
-            .filter((l) => l.trim())
-            .map((line, i) => (
-              <li key={i}>{line.replace(/^\s*[-*•]\s*/, '')}</li>
-            ))}
-        </ul>
-      );
-    case 'source':
-      return (
-        <p className="text-xs text-emerald-400/80 font-mono my-1">
-          {block.text.replace(/^\s*[-*]\s*/, '')}
-        </p>
-      );
+    case 'table':
     case 'quote':
-      return (
-        <blockquote className="border-l-2 border-emerald-500/40 pl-4 italic text-slate-400 my-2 text-sm">
-          {block.text.replace(/^>\s*/, '')}
-        </blockquote>
-      );
+      return <ReportMarkdown text={block.text} sources={sources} />;
+    case 'source': {
+      // A citation is data, so it is set in mono — but it is not a status, so
+      // it does not wear a status colour. The markdown link is rendered as a
+      // real link: printing "[IBM Research](https://ibm.com/a)" as literal
+      // text is not a citation, it is a leftover from the Markdown source.
+      const numbered = /^\s*(\d+)\.\s*/.exec(block.text);
+      const raw = block.text.replace(/^\s*(?:[-*]|\d+\.)\s*/, '').trim();
+      const link = /^\[([^\]]+)\]\(([^)\s]+)\)\s*$/.exec(raw);
+      if (link) {
+        return (
+          <p className="text-micro text-ink-muted font-mono my-2">
+            {numbered ? <span className="text-ink-faint mr-1.5">[{numbered[1]}]</span> : null}
+            <a
+              href={link[2]}
+              target="_blank"
+              rel="noopener noreferrer"
+              className="text-ink underline decoration-rule-strong underline-offset-[0.18em] hover:decoration-ink"
+            >
+              {link[1]}
+            </a>
+            <span className="text-ink-faint"> — </span>
+            <a
+              href={link[2]}
+              target="_blank"
+              rel="noopener noreferrer"
+              className="text-ink-faint underline decoration-rule underline-offset-[0.18em] hover:text-ink-muted hover:decoration-rule-strong"
+            >
+              {link[2]}
+            </a>
+          </p>
+        );
+      }
+      return <p className="text-micro text-ink-muted font-mono my-2">{raw}</p>;
+    }
     case 'code':
       return (
-        <pre className="bg-slate-900 border border-slate-800 rounded-lg overflow-x-auto text-xs my-4 p-4 font-mono">
+        <pre className="bg-paper-inset border border-rule rounded-md overflow-x-auto text-micro my-4 p-4 font-mono text-ink">
           {block.text.replace(/^```\w*\n?/, '').replace(/```$/, '')}
         </pre>
       );
     default:
-      return <p className="text-slate-300 leading-relaxed font-sans text-sm my-3">{block.text}</p>;
+      return <ReportMarkdown text={block.text} sources={sources} />;
   }
 }
 
@@ -323,27 +358,33 @@ const HiddenSections: React.FC<{
   if (hidden.length === 0) return null;
 
   return (
-    <div className="mt-6 border-t border-slate-800 pt-3">
+    <div className="mt-8 pt-4 border-t border-rule">
       <button
         type="button"
         onClick={() => setOpen((v) => !v)}
-        className="flex items-center gap-1.5 text-[10px] text-slate-500 hover:text-slate-300 font-mono uppercase"
+        aria-expanded={open}
+        className="flex items-center gap-2 text-micro text-ink-faint hover:text-ink transition-colors"
       >
         <Eye className="w-3 h-3" />
-        {hidden.length} hidden {hidden.length === 1 ? 'section' : 'sections'}
+        <span className="folio">
+          {hidden.length} hidden {hidden.length === 1 ? 'section' : 'sections'}
+        </span>
+        <span className="text-ink-ghost normal-case tracking-normal">
+          {open ? 'hide list' : 'show list'}
+        </span>
       </button>
       {open ? (
         <ul className="mt-2 space-y-1">
           {hidden.map((b) => (
             <li key={b.id} className="flex items-center justify-between gap-2">
-              <span className="text-[11px] text-slate-500 font-sans truncate">
+              <span className="text-micro text-ink-faint font-sans truncate">
                 {b.text.slice(0, 70)}
               </span>
               <button
                 type="button"
                 disabled={busy}
                 onClick={() => onRestore(b.id)}
-                className="text-[10px] text-emerald-400 hover:text-emerald-300 font-mono shrink-0"
+                className="text-micro text-ink hover:text-ink font-mono shrink-0"
               >
                 Restore
               </button>
@@ -369,7 +410,7 @@ const IconBtn: React.FC<{
     aria-label={title}
     disabled={disabled}
     onClick={onClick}
-    className="w-5 h-5 flex items-center justify-center rounded bg-slate-800/90 border border-slate-700 text-slate-400 hover:text-emerald-400 hover:border-emerald-500/50 transition disabled:opacity-40"
+    className="w-5 h-5 flex items-center justify-center rounded bg-paper-deep/90 border border-rule-strong text-ink-muted hover:text-ink hover:border-rule-strong transition disabled:opacity-40"
   >
     {children}
   </button>
@@ -387,7 +428,7 @@ const MenuBtn: React.FC<{
     aria-label={title}
     disabled={busy}
     onClick={onClick}
-    className="px-2 py-1 rounded text-slate-300 hover:bg-slate-800 hover:text-emerald-400 transition disabled:opacity-40"
+    className="px-2 py-1 rounded text-ink hover:bg-paper-deep hover:text-ink transition disabled:opacity-40"
   >
     {busy ? <Spinner /> : children}
   </button>

@@ -3,21 +3,20 @@ import { AlertTriangle, RotateCcw, SlidersHorizontal } from 'lucide-react';
 import {
   CONFIG_BOUNDS,
   DEFAULT_CONFIG,
+  REPORT_THEMES,
+  REPORT_TYPES,
   estimateCost,
   validateConfig,
   type ResearchConfig,
 } from '../shared/types/researchConfig';
 
 /**
- * Advanced research configuration.
+ * Advanced run settings.
  *
- * Every control is clamped to the server's bound and the cost is labelled as
- * an estimate. The point is that a user can see what they are about to spend
- * before they spend it — and that an inconsistent plan is refused here with a
- * reason rather than silently truncated at run time.
- *
- * The types and bounds live in shared/types/researchConfig so the store can
- * import them without a cycle back into features/.
+ * Previously a dense block of tiny (9-10px) uppercase labels with long
+ * internal hints ("How many pages this run may read"). Labels are now plain
+ * sentences at a readable size, and the cost estimate keeps its honest
+ * "estimate, not measured" caveat.
  */
 export const ResearchConfigPanel: React.FC<{
   value: ResearchConfig;
@@ -32,25 +31,32 @@ export const ResearchConfigPanel: React.FC<{
     onChange({ ...value, [key]: v });
   };
 
+  const setStr = <K extends keyof ResearchConfig>(key: K, v: string) => {
+    onChange({ ...value, [key]: v });
+  };
+
   return (
-    <div className="border border-slate-800 rounded-lg bg-slate-900/40">
+    <div className="border border-rule rounded-md bg-paper">
       <button
         type="button"
         onClick={() => setOpen((v) => !v)}
-        className="w-full flex items-center justify-between px-3 py-2 text-left"
+        className="w-full flex items-center justify-between gap-3 px-3 py-2.5 text-left"
+        aria-expanded={open}
       >
-        <span className="flex items-center gap-2 text-[11px] font-bold uppercase tracking-wide text-slate-300">
-          <SlidersHorizontal className="w-3.5 h-3.5 text-emerald-400" />
-          Advanced
+        <span className="flex items-center gap-2 text-label text-ink-muted">
+          <SlidersHorizontal className="w-3.5 h-3.5" />
+          Advanced settings
         </span>
-        <span className="text-[10px] text-slate-500 font-mono">
+        <span className="text-micro text-ink-faint">
           {value.maxPages} pages · depth {value.maxDepth}
-          {value.verifySamplingRate < 1 ? ` · ${Math.round(value.verifySamplingRate * 100)}% verified` : ''}
         </span>
       </button>
 
       {open ? (
-        <div className="px-3 pb-3 space-y-3 border-t border-slate-800 pt-3">
+        /* The expanded panel is tall. It gets its own bounded scroll so its
+           last control is always reachable, whatever the composer around it
+           is doing. */
+        <div className="px-4 pb-4 space-y-4 border-t border-rule pt-4 max-h-[46vh] overflow-y-auto">
           <Slider
             bound={CONFIG_BOUNDS.maxPages}
             value={value.maxPages}
@@ -74,37 +80,73 @@ export const ResearchConfigPanel: React.FC<{
             onChange={(v) => set('scrapeBudget', v)}
           />
 
+          <Select
+            label="Report type"
+            value={value.reportType}
+            onChange={(v) => setStr('reportType', v)}
+            options={REPORT_TYPES.map((rt) => ({ value: rt.value, label: rt.label, hint: rt.desc }))}
+          />
+
+          <Slider
+            bound={{ min: 1, max: 100, step: 1, label: 'Target pages', hint: 'Approximate page count. The report is not padded to hit it, and it does not stop short either.' }}
+            value={value.targetPages}
+            onChange={(v) => set('targetPages', v)}
+          />
+
+          <Select
+            label="PDF theme"
+            value={value.reportTheme}
+            onChange={(v) => setStr('reportTheme', v)}
+            options={REPORT_THEMES.map((t) => ({ value: t.value, label: t.label, hint: t.desc }))}
+          />
+
+          {value.reportType === 'custom' ? (
+            <div>
+              <label className="block text-label text-ink-muted mb-1" htmlFor="custom-structure">
+                Custom report structure
+              </label>
+              <textarea
+                id="custom-structure"
+                value={value.reportStructurePrompt}
+                onChange={(e) => setStr('reportStructurePrompt', e.target.value)}
+                placeholder="How should the report be structured?"
+                rows={3}
+                className="w-full bg-paper border border-rule rounded-md px-2.5 py-2 text-label text-ink focus:outline-none focus:border-ink focus:ring-1 focus:ring-ink resize-y"
+              />
+            </div>
+          ) : null}
+
           {value.verifySamplingRate < 1 ? (
-            <p className="text-[10px] text-amber-300/80 font-sans leading-relaxed">
-              Only {Math.round(value.verifySamplingRate * 100)}% of claims will be checked against
-              their sources. The report will say which claims are unverified.
+            <p className="text-micro text-ink leading-relaxed">
+              Only {Math.round(value.verifySamplingRate * 100)}% of claims will be checked
+              against their sources. The report will say which claims are unverified.
             </p>
           ) : null}
 
           {problems.length > 0 ? (
-            <div role="alert" className="border border-red-500/30 bg-red-500/5 rounded px-2.5 py-2">
-              <p className="flex items-center gap-1.5 text-[10px] font-bold uppercase text-red-300">
-                <AlertTriangle className="w-3 h-3" />
+            <div role="alert" className="border border-rule-strong bg-paper-inset rounded-md px-3 py-2.5">
+              <p className="flex items-center gap-1.5 text-micro font-medium text-ink">
+                <AlertTriangle className="w-3.5 h-3.5" />
                 This run would be refused
               </p>
-              <ul className="mt-1 space-y-0.5">
+              <ul className="mt-1.5 space-y-1">
                 {problems.map((p) => (
-                  <li key={p} className="text-[10px] text-red-200/80 font-sans">{p}</li>
+                  <li key={p} className="text-micro text-ink/90 leading-relaxed">{p}</li>
                 ))}
               </ul>
             </div>
           ) : null}
 
-          <div className="flex items-center justify-between pt-1 border-t border-slate-800">
-            <span className="text-[10px] text-slate-500 font-mono">
-              Estimated ${estimate.toFixed(4)} <span className="text-slate-600">(estimate, not measured)</span>
+          <div className="flex items-center justify-between pt-1 border-t border-rule">
+            <span className="text-micro text-ink-faint">
+              Estimated ${estimate.toFixed(4)} <span className="text-ink-faint/70">(estimate, not measured)</span>
             </span>
             <button
               type="button"
               onClick={() => onChange(DEFAULT_CONFIG)}
-              className="flex items-center gap-1 text-[10px] text-slate-400 hover:text-slate-200 font-mono"
+              className="flex items-center gap-1.5 text-micro text-ink-muted hover:text-ink"
             >
-              <RotateCcw className="w-3 h-3" />
+              <RotateCcw className="w-3.5 h-3.5" />
               Reset
             </button>
           </div>
@@ -121,12 +163,12 @@ const Slider: React.FC<{
   format?: (v: number) => string;
 }> = ({ bound, value, onChange, format }) => (
   <label className="block">
-    <div className="flex items-baseline justify-between mb-1">
-      <span className="text-[10px] font-bold uppercase tracking-wide text-slate-400">{bound.label}</span>
-      <span className="text-[10px] text-emerald-400 font-mono">
+    <span className="flex items-baseline justify-between gap-3 mb-1">
+      <span className="text-label text-ink-muted">{bound.label}</span>
+      <span className="text-micro text-ink font-mono">
         {format ? format(value) : value.toLocaleString()}
       </span>
-    </div>
+    </span>
     <input
       type="range"
       min={bound.min}
@@ -134,10 +176,33 @@ const Slider: React.FC<{
       step={bound.step}
       value={value}
       onChange={(e) => onChange(Number(e.target.value))}
-      className="w-full accent-emerald-500"
+      className="w-full accent-accent"
     />
-    <p className="text-[9px] text-slate-600 font-sans mt-0.5 leading-relaxed">{bound.hint}</p>
+    <span className="block text-micro text-ink-faint mt-1 leading-relaxed">{bound.hint}</span>
   </label>
+);
+
+const Select: React.FC<{
+  label: string;
+  value: string;
+  onChange: (v: string) => void;
+  options: { value: string; label: string; hint: string }[];
+}> = ({ label, value, onChange, options }) => (
+  <div>
+    <label className="block text-label text-ink-muted mb-1">{label}</label>
+    <select
+      value={value}
+      onChange={(e) => onChange(e.target.value)}
+      className="w-full bg-paper border border-rule rounded-md px-2.5 py-2 text-label text-ink focus:outline-none focus:border-ink focus:ring-1 focus:ring-ink"
+    >
+      {options.map((o) => (
+        <option key={o.value} value={o.value}>{o.label}</option>
+      ))}
+    </select>
+    <p className="text-micro text-ink-faint mt-1 leading-relaxed">
+      {options.find((o) => o.value === value)?.hint}
+    </p>
+  </div>
 );
 
 export default ResearchConfigPanel;
