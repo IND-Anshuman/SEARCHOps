@@ -5,6 +5,7 @@ Unit tests for EntityCanonicalizer alias resolution.
 from __future__ import annotations
 
 import pytest
+
 from searchops.knowledge.canonicalizer import EntityCanonicalizer, slugify
 
 

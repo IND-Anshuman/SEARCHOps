@@ -5,6 +5,7 @@ Unit tests for LLMCostEvaluator and LLMRouter fallback cascade.
 from __future__ import annotations
 
 import pytest
+
 from searchops.llm.cost_evaluator import LLMCostEvaluator
 
 
@@ -28,7 +29,14 @@ def test_cost_evaluator_select_cheapest():
 
 @pytest.mark.unit
 def test_llm_router_provider_detection():
-    from searchops.llm.router import LLMRouter, _is_claude, _is_gemini, _is_nvidia, _is_bedrock, _is_glm
+    from searchops.llm.router import (
+        LLMRouter,
+        _is_bedrock,
+        _is_claude,
+        _is_gemini,
+        _is_glm,
+        _is_nvidia,
+    )
 
     assert _is_claude("claude-3-haiku") is True
     assert _is_gemini("gemini-2.0-flash") is True
@@ -40,4 +48,3 @@ def test_llm_router_provider_detection():
     assert router._resolve_provider_label("gpt-4o-mini") == "openai"
     assert router._resolve_provider_label("claude-3-haiku") == "anthropic"
     assert router._resolve_provider_label("gemini-1.5-flash") == "google"
-

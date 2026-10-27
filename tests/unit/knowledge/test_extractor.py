@@ -4,8 +4,9 @@ Unit tests for LLM EntityExtractor.
 
 from __future__ import annotations
 
+from unittest.mock import AsyncMock
+
 import pytest
-from unittest.mock import AsyncMock, MagicMock
 
 from searchops.knowledge.extractor import EntityExtractor
 
@@ -56,7 +57,7 @@ async def test_entity_extractor_batch():
     mock_router.generate.return_value = json_payload
 
     extractor = EntityExtractor(llm_router=mock_router)
-    entities, relations = await extractor.extract_batch(["doc1", "doc2"], batch_size=1)
+    entities, _relations = await extractor.extract_batch(["doc1", "doc2"], batch_size=1)
 
     assert len(entities) == 1
     assert entities[0].name == "A"

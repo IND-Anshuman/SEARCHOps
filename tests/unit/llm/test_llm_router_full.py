@@ -4,10 +4,10 @@ Unit tests for LLMRouter generate method, prompt safety truncation, and caching.
 
 from __future__ import annotations
 
-import pytest
 from unittest.mock import AsyncMock, MagicMock, patch
 
-from searchops.llm.cache import LLMResponseCache
+import pytest
+
 from searchops.llm.router import LLMRouter
 
 
@@ -64,3 +64,40 @@ async def test_llm_router_prompt_truncation():
         huge_prompt = "word " * 100
         res = await router.generate(huge_prompt)
         assert res == "Truncated Ok"
+
+
+def _response(content: str) -> MagicMock:
+    r = MagicMock()
+    r.content = content
+    r.response_metadata = {"token_usage": {"prompt_tokens": 10, "completion_tokens": 5}}
+    return r
+
+
+@pytest.mark.unit
+@pytest.mark.asyncio
+async def test_empty_completion_is_retried_and_usage_is_counted():
+    """A reasoning model can return no content; the router retries before giving up."""
+    router = LLMRouter()
+    model = AsyncMock()
+    model.ainvoke.side_effect = [_response(""), _response("Real answer")]
+
+    with patch.object(router, "_get_model", return_value=model):
+        res = await router.generate("Prompt", temperature=0.3)
+
+    assert res == "Real answer"
+    assert model.ainvoke.await_count == 2
+    assert router.usage["calls"] == 1
+    assert router.usage["prompt_tokens"] == 10
+
+
+@pytest.mark.unit
+@pytest.mark.asyncio
+async def test_all_empty_completions_return_empty_string():
+    router = LLMRouter()
+    model = AsyncMock()
+    model.ainvoke.return_value = _response("   ")
+
+    with patch.object(router, "_get_model", return_value=model):
+        res = await router.generate("Prompt", temperature=0.3)
+
+    assert res == ""
