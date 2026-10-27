@@ -1,134 +1,205 @@
-import React, { useState } from 'react';
+import React, { useState, useMemo } from 'react';
 import { useWorkbenchStore } from '../shared/store/useWorkbenchStore';
 import { useExecutionStore } from '../shared/store/useExecutionStore';
-import { 
-  Terminal as TerminalIcon, 
-  ChevronDown, 
-  ChevronUp, 
-  Filter,
-  Maximize2,
-  Minimize2
-} from 'lucide-react';
+import { str } from '../shared/lib/safe';
+import { Terminal as TerminalIcon, ChevronDown, ChevronUp, Maximize2, Minimize2 } from 'lucide-react';
+import { StatusMarkGlyph } from '../shared/components/StatusMark';
+
+/**
+ * Bottom console.
+ *
+ * The tab row used a different accent colour per tab (emerald, cyan, rose,
+ * indigo, amber, purple), which made the console look like a rainbow rather
+ * than a set of filters. Tabs are now neutral with a single accent for the
+ * active one, and log levels use the semantic palette.
+ */
+const TABS = [
+  { id: 'logs', label: 'All' },
+  { id: 'events', label: 'Events' },
+  { id: 'errors', label: 'Errors' },
+  { id: 'websocket', label: 'Stream' },
+  { id: 'network', label: 'Network' },
+  { id: 'workers', label: 'Workers' },
+] as const;
+
+type TabId = (typeof TABS)[number]['id'];
 
 export const BottomConsole: React.FC = () => {
-  const { 
-    isConsoleOpen, 
-    toggleConsole, 
-    activeConsoleTab, 
-    setActiveConsoleTab 
+  const {
+    isConsoleOpen,
+    toggleConsole,
+    activeConsoleTab,
+    setActiveConsoleTab,
   } = useWorkbenchStore();
 
   const { logs } = useExecutionStore();
+  const { job } = useExecutionStore();
   const [isFullscreen, setIsFullscreen] = useState(false);
+  const [levelFilter, setLevelFilter] = useState<'all' | 'error' | 'warn' | 'info'>('all');
 
-  if (!isConsoleOpen) {
-    return (
-      <div className="h-7 bg-slate-950 border-t border-slate-800 px-3 flex items-center justify-between text-xs font-mono select-none z-20">
-        <button 
-          onClick={toggleConsole}
-          className="flex items-center space-x-2 text-slate-400 hover:text-slate-200"
-        >
-          <TerminalIcon className="w-3.5 h-3.5 text-emerald-400" />
-          <span className="font-semibold text-[11px] uppercase">Console Console</span>
-          <span className="text-slate-500 text-[10px]">(Collapsed - Ctrl+~ to expand)</span>
-        </button>
-        <button onClick={toggleConsole} className="text-slate-400 hover:text-slate-200">
-          <ChevronUp className="w-3.5 h-3.5" />
-        </button>
-      </div>
-    );
-  }
+  // The console is a bench instrument, not furniture. It belongs on screen
+  // while a run is live; once the run is over its output is history, and a
+  // permanent band across the foot of the window is the last piece of the
+  // dashboard template this product had left.
+  const runIsLive = job.status === 'running' || job.status === 'pending';
 
-  // Filter logs based on tabs
-  const getTabLogs = () => {
-    switch (activeConsoleTab) {
+  const getTabLogs = (tab: TabId) => {
+    switch (tab) {
       case 'events':
-        return logs.filter(l => l.eventType.startsWith("NODE_") || l.eventType.startsWith("JOB_"));
+        return logs.filter(l => str(l.eventType).startsWith('NODE_') || str(l.eventType).startsWith('JOB_'));
       case 'errors':
         return logs.filter(l => l.level === 'error');
       case 'websocket':
-        return logs.filter(l => l.stream.includes("websocket") || l.eventType.includes("WS_") || l.eventType === "JOB_STARTED" || l.eventType === "JOB_COMPLETED");
+        return logs.filter(l => str(l.stream).includes('websocket') || str(l.eventType).includes('WS_') || str(l.eventType) === 'JOB_STARTED' || str(l.eventType) === 'JOB_COMPLETED');
       case 'network':
-        return logs.filter(l => l.stream.includes("network") || l.eventType.includes("HTTP_") || l.eventType === "JOB_STARTED");
+        return logs.filter(l => str(l.stream).includes('network') || str(l.eventType).includes('HTTP_') || str(l.eventType) === 'JOB_STARTED');
       case 'workers':
-        return logs.filter(l => l.stream.includes("worker") || l.eventType.includes("WORKER_"));
-      case 'logs':
+        return logs.filter(l => str(l.stream).includes('worker') || str(l.eventType).includes('WORKER_'));
       default:
         return logs;
     }
   };
 
-  const currentTabLogs = getTabLogs();
+  const currentTabLogs = useMemo(() => {
+    const base = getTabLogs(activeConsoleTab);
+    if (levelFilter === 'all') return base;
+    return base.filter(l => l.level === levelFilter);
+  }, [logs, activeConsoleTab, levelFilter]);
+
+  if (!runIsLive) return null;
+
+  if (!isConsoleOpen) {
+    // The collapsed console is a status line, not an empty drawer: it says
+    // how much was logged and whether any of it is an error, so the strip at
+    // the foot of the page is worth the pixels it takes.
+    const errors = logs.filter(l => l.level === 'error').length;
+    const warnings = logs.filter(l => l.level === 'warn').length;
+
+    return (
+      <div className="h-8 shrink-0 bg-paper-raised border-t border-rule px-5 flex items-center justify-between z-20">
+        <button
+          type="button"
+          onClick={toggleConsole}
+          className="flex items-center gap-2.5 text-micro text-ink-faint hover:text-ink transition-colors"
+        >
+          <TerminalIcon className="w-3 h-3" />
+          <span className="folio">Console</span>
+          {logs.length > 0 && (
+            <span className="text-micro tnum text-ink-ghost">
+              {logs.length} {logs.length === 1 ? 'event' : 'events'}
+            </span>
+          )}
+        </button>
+
+        <div className="flex items-center gap-3">
+          {warnings > 0 && (
+            <span className="text-micro text-ink-muted flex items-center gap-1.5">
+              <StatusMarkGlyph status="half" className="text-ink" />
+              <span className="tnum">{warnings}</span>
+              {warnings === 1 ? 'warning' : 'warnings'}
+            </span>
+          )}
+          {errors > 0 && (
+            <span className="text-micro text-ink-muted flex items-center gap-1.5">
+              <StatusMarkGlyph status="empty" className="text-ink" />
+              <span className="tnum">{errors}</span>
+              {errors === 1 ? 'error' : 'errors'}
+            </span>
+          )}
+          <button
+            type="button"
+            onClick={toggleConsole}
+            className="p-1 text-ink-faint hover:text-ink rounded transition-colors"
+            aria-label="Expand console"
+          >
+            <ChevronUp className="w-3.5 h-3.5" />
+          </button>
+        </div>
+      </div>
+    );
+  }
 
   return (
-    <div className={`bg-slate-950 border-t border-slate-800 flex flex-col transition-all duration-150 z-20 ${
-      isFullscreen ? 'h-96' : 'h-48'
-    }`}>
-      {/* Header Tabs */}
-      <div className="h-8 bg-slate-900 border-b border-slate-800 px-3 flex items-center justify-between text-xs font-mono select-none">
-        <div className="flex items-center space-x-1">
-          {([
-            { id: 'logs', label: 'LOGS', color: 'text-emerald-400' },
-            { id: 'events', label: 'EVENTS', color: 'text-cyan-400' },
-            { id: 'errors', label: 'ERRORS', color: 'text-rose-400' },
-            { id: 'websocket', label: 'WEBSOCKET', color: 'text-indigo-400' },
-            { id: 'network', label: 'NETWORK', color: 'text-amber-400' },
-            { id: 'workers', label: 'WORKER OUTPUT', color: 'text-purple-400' }
-          ] as const).map((tab) => (
-            <button
-              key={tab.id}
-              onClick={() => setActiveConsoleTab(tab.id)}
-              className={`flex items-center space-x-1.5 px-2.5 py-1 rounded-t border-t border-x text-[10px] transition ${
-                activeConsoleTab === tab.id
-                  ? `bg-slate-950 ${tab.color} border-slate-800 font-semibold`
-                  : 'text-slate-400 hover:text-slate-200 border-transparent bg-slate-900/40'
-              }`}
-            >
-              <span>{tab.label}</span>
-            </button>
-          ))}
+    <div className={`shrink-0 bg-paper-raised border-t border-rule flex flex-col transition-[height] duration-200 ease-out-expo ${isFullscreen ? 'h-96' : 'h-52'}`}>
+      <div className="h-9 px-3 flex items-center justify-between border-b border-rule">
+        <div className="flex items-center gap-0.5" role="tablist" aria-label="Console channels">
+          {TABS.map((tab) => {
+            const active = activeConsoleTab === tab.id;
+            return (
+              <button
+                key={tab.id}
+                type="button"
+                role="tab"
+                aria-selected={active}
+                onClick={() => setActiveConsoleTab(tab.id)}
+                className={`px-2.5 py-1.5 rounded-md text-micro transition-colors ${
+                  active ? 'bg-paper-inset text-ink' : 'text-ink-muted hover:text-ink hover:bg-paper'
+                }`}
+              >
+                {tab.label}
+              </button>
+            );
+          })}
         </div>
 
-        {/* Console Controls */}
-        <div className="flex items-center space-x-2">
-          <button 
-            onClick={() => setIsFullscreen(!isFullscreen)}
-            className="p-1 text-slate-450 hover:text-slate-200 rounded"
-            title="Toggle Expand"
+        <div className="flex items-center gap-1">
+          <select
+            value={levelFilter}
+            onChange={e => setLevelFilter(e.target.value as 'all' | 'error' | 'warn' | 'info')}
+            className="bg-paper border border-rule rounded-md text-micro text-ink-muted px-1.5 py-1 focus:outline-none focus:border-ink"
+            aria-label="Filter by level"
+          >
+            <option value="all">All levels</option>
+            <option value="error">Errors</option>
+            <option value="warn">Warnings</option>
+            <option value="info">Info</option>
+          </select>
+          <button
+            type="button"
+            onClick={() => setIsFullscreen(v => !v)}
+            className="p-1.5 text-ink-faint hover:text-ink rounded-md hover:bg-paper transition-colors"
+            aria-label={isFullscreen ? 'Collapse' : 'Expand'}
           >
             {isFullscreen ? <Minimize2 className="w-3.5 h-3.5" /> : <Maximize2 className="w-3.5 h-3.5" />}
           </button>
-          <button 
+          <button
+            type="button"
             onClick={toggleConsole}
-            className="p-1 text-slate-450 hover:text-slate-200 rounded"
-            title="Collapse"
+            className="p-1.5 text-ink-faint hover:text-ink rounded-md hover:bg-paper transition-colors"
+            aria-label="Hide console"
           >
             <ChevronDown className="w-3.5 h-3.5" />
           </button>
         </div>
       </div>
 
-      {/* Stream Area */}
-      <div className="flex-1 overflow-y-auto p-2 bg-slate-950 text-[11px] font-mono leading-relaxed space-y-0.5">
+      <div className="flex-1 overflow-y-auto px-3 py-2 font-mono text-micro">
         {currentTabLogs.length === 0 ? (
-          <div className="text-slate-650 italic p-4 text-center">No logs streaming in this channel yet.</div>
+          <p className="text-ink-faint py-6 text-center font-sans text-micro">
+            Nothing logged in this channel yet.
+          </p>
         ) : (
-          currentTabLogs.map((log) => (
-            <div key={log.id} className="flex items-start space-x-2 hover:bg-slate-900/60 p-0.5 rounded">
-              <span className="text-slate-500 shrink-0 select-none">[{log.timestamp}]</span>
-              <span className={`shrink-0 font-bold px-1 rounded text-[9px] uppercase select-none ${
-                log.level === 'info' ? 'bg-emerald-500/10 text-emerald-400' :
-                log.level === 'warn' ? 'bg-amber-500/10 text-amber-400' :
-                log.level === 'error' ? 'bg-rose-500/10 text-rose-450' :
-                'bg-cyan-500/10 text-cyan-400'
-              }`}>
-                {log.eventType}
-              </span>
-              <span className="text-slate-300 overflow-x-auto whitespace-pre-wrap font-sans text-xs">
-                {JSON.stringify(log.payload)}
-              </span>
-            </div>
-          ))
+          <div className="space-y-0.5">
+            {currentTabLogs.map((log) => (
+              <div key={log.id || `${log.timestamp}-${log.eventType}`} className="flex items-start gap-2 py-0.5 hover:bg-paper rounded px-1">
+                <span className="text-ink-faint shrink-0">[{str(log.timestamp)}]</span>
+                <span
+                  className={`shrink-0 font-medium ${
+                    log.level === 'error'
+                      ? 'text-ink'
+                      : log.level === 'warn'
+                      ? 'text-ink'
+                      : 'text-ink-faint'
+                  }`}
+                >
+                  {str(log.eventType) || 'EVENT'}
+                </span>
+                <span className="text-ink-muted whitespace-pre-wrap break-words font-sans">
+                  {JSON.stringify(log.payload ?? {})}
+                </span>
+              </div>
+            ))}
+          </div>
         )}
       </div>
     </div>

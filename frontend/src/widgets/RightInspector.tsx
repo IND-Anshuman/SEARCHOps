@@ -1,15 +1,16 @@
 import React from 'react';
 import { useWorkbenchStore } from '../shared/store/useWorkbenchStore';
-import { 
-  X, 
-  Copy, 
-  Check, 
-  Database, 
-  Cpu, 
-  FileText, 
-  ExternalLink 
-} from 'lucide-react';
+import { money, num, pct, str, obj } from '../shared/lib/safe';
+import { X, Copy, Check, ExternalLink } from 'lucide-react';
 
+/**
+ * Detail panel.
+ *
+ * The previous version used a different layout per item type (some
+ * font-sans, some font-mono, some with pills) so the panel changed shape
+ * depending on what you clicked. It now has one consistent structure: a
+ * header, a key/value summary, then the payload.
+ */
 export const RightInspector: React.FC = () => {
   const { isInspectorOpen, closeInspector, inspectorSelection } = useWorkbenchStore();
   const [copied, setCopied] = React.useState(false);
@@ -19,6 +20,8 @@ export const RightInspector: React.FC = () => {
   }
 
   const { type, data } = inspectorSelection;
+  const d = obj(data);
+  const status = str(d.status);
 
   const handleCopy = (text: string) => {
     navigator.clipboard.writeText(text);
@@ -26,180 +29,177 @@ export const RightInspector: React.FC = () => {
     setTimeout(() => setCopied(false), 2000);
   };
 
+  const title = (() => {
+    switch (type) {
+      case 'node': return str(d.label) || str(d.id) || 'Node';
+      case 'entity': return str(d.name) || 'Entity';
+      case 'chunk': return str(d.documentTitle) || 'Chunk';
+      case 'report': return str(d.title) || 'Report';
+      case 'citation': return 'Source';
+      case 'prompt': return 'Prompt';
+      default: return 'Details';
+    }
+  })();
+
   return (
-    <aside className="w-80 bg-slate-950 border-l border-slate-800 flex flex-col h-full z-20 text-xs font-mono select-text shrink-0">
-      {/* Inspector Header */}
-      <div className="h-10 px-3 border-b border-slate-800 flex items-center justify-between bg-slate-900/80">
-        <div className="flex items-center space-x-2 text-slate-200">
-          <span className="font-semibold uppercase tracking-wider text-[11px] text-emerald-400">
-            {type} Inspector
-          </span>
+    <aside className="w-80 shrink-0 bg-paper-raised border-l border-rule flex flex-col h-full z-20">
+      <div className="px-3 py-3 border-b border-rule flex items-start justify-between gap-2">
+        <div className="min-w-0">
+          <p className="text-micro uppercase tracking-[0.1em] text-ink-faint">{type}</p>
+          <h3 className="text-label font-medium text-ink truncate mt-0.5">{title}</h3>
         </div>
-        <button 
+        <button
+          type="button"
           onClick={closeInspector}
-          className="p-1 text-slate-400 hover:text-slate-200 hover:bg-slate-800 rounded transition"
+          className="p-1 text-ink-faint hover:text-ink hover:bg-paper rounded-md transition-colors shrink-0"
+          aria-label="Close inspector"
         >
           <X className="w-4 h-4" />
         </button>
       </div>
 
-      {/* Inspector Content Scrollable */}
-      <div className="flex-1 overflow-y-auto p-3 space-y-4">
-        {/* LANGGRAPH NODE INSPECTOR */}
-        {type === 'node' && data && (
-          <div className="space-y-4">
-            <div className="bg-slate-900 border border-slate-800 p-2.5 rounded space-y-1.5">
-              <div className="flex items-center justify-between">
-                <span className="text-slate-500 font-bold uppercase text-[9px]">{data.type}</span>
-                <span className={`px-1.5 py-0.2 rounded text-[9px] uppercase font-bold ${
-                  data.status === 'completed' ? 'bg-emerald-500/10 text-emerald-400 border border-emerald-500/30' :
-                  data.status === 'running' ? 'bg-cyan-500/10 text-cyan-400 border border-cyan-500/30 animate-pulse' :
-                  'bg-slate-800 text-slate-400'
-                }`}>
-                  {data.status}
-                </span>
-              </div>
-              <h4 className="text-slate-100 font-semibold text-sm font-sans">{data.label}</h4>
-              <p className="text-slate-500 text-[10px] truncate">ID: {data.id}</p>
-            </div>
+      <div className="flex-1 overflow-y-auto px-3 py-3 space-y-4">
+        {/* ── Node ─────────────────────────────────────────────────────────── */}
+        {type === 'node' && (
+          <>
+            <Summary
+              rows={[
+                ['Status', status || '—'],
+                ['Type', str(d.type) || '—'],
+                ['Latency', `${num(d.latencyMs)} ms`],
+                ['Cost', `$${money(d.tokenCost)}`],
+              ]}
+            />
 
-            {/* Performance Stats */}
-            <div className="grid grid-cols-2 gap-2">
-              <div className="bg-slate-900 border border-slate-800 p-2 rounded">
-                <span className="text-slate-500 text-[9px] uppercase">LATENCY</span>
-                <p className="text-slate-200 font-bold text-xs">{data.latencyMs} ms</p>
-              </div>
-              <div className="bg-slate-900 border border-slate-800 p-2 rounded">
-                <span className="text-slate-500 text-[9px] uppercase">TOKEN COST</span>
-                <p className="text-emerald-400 font-bold text-xs">${data.tokenCost.toFixed(3)}</p>
-              </div>
-            </div>
+            {d.prompt ? (
+              <Section label="Prompt template">
+                <Pre text={str(d.prompt)} onCopy={() => handleCopy(str(d.prompt))} copied={copied} maxHeight="max-h-40" />
+              </Section>
+            ) : null}
 
-            {/* Prompt Template */}
-            {data.prompt && (
-              <div className="space-y-1">
-                <div className="flex items-center justify-between text-slate-400 text-[10px]">
-                  <span>JINJA PROMPT TEMPLATE</span>
-                  <button onClick={() => handleCopy(data.prompt)} className="hover:text-slate-200">
-                    {copied ? <Check className="w-3 h-3 text-emerald-400" /> : <Copy className="w-3 h-3" />}
-                  </button>
-                </div>
-                <pre className="bg-slate-900 border border-slate-800 p-2 rounded text-slate-350 whitespace-pre-wrap text-[10px] max-h-36 overflow-y-auto font-mono">
-                  {data.prompt}
-                </pre>
-              </div>
-            )}
+            <Section label="Input">
+              <Pre text={JSON.stringify(obj(d.inputPayload), null, 2)} maxHeight="max-h-44" />
+            </Section>
 
-            {/* Input Payload */}
-            <div className="space-y-1">
-              <span className="text-slate-500 text-[10px] uppercase">Input State Delta</span>
-              <pre className="bg-slate-900 border border-slate-800 p-2 rounded text-cyan-400 text-[10px] overflow-x-auto max-h-40 overflow-y-auto">
-                {JSON.stringify(data.inputPayload || {}, null, 2)}
-              </pre>
-            </div>
-
-            {/* Output Payload */}
-            <div className="space-y-1">
-              <span className="text-slate-500 text-[10px] uppercase">Output State Delta</span>
-              <pre className="bg-slate-900 border border-slate-800 p-2 rounded text-emerald-400 text-[10px] overflow-x-auto max-h-40 overflow-y-auto">
-                {JSON.stringify(data.outputPayload || {}, null, 2)}
-              </pre>
-            </div>
-          </div>
+            <Section label="Output">
+              <Pre text={JSON.stringify(obj(d.outputPayload), null, 2)} maxHeight="max-h-44" />
+            </Section>
+          </>
         )}
 
-        {/* KNOWLEDGE ENTITY INSPECTOR */}
-        {type === 'entity' && data && (
-          <div className="space-y-4 font-sans text-xs">
-            <div className="bg-slate-900 border border-slate-800 p-2.5 rounded space-y-1 font-mono">
-              <span className="text-slate-450 text-[9px] font-bold block truncate">{data.canonicalId}</span>
-              <h4 className="text-slate-100 font-semibold text-sm font-sans">{data.name}</h4>
-              <span className="text-[10px] text-emerald-400 uppercase bg-emerald-500/10 border border-emerald-500/20 px-2 py-0.5 rounded font-bold">{data.type}</span>
-            </div>
-
-            <div className="bg-slate-900 border border-slate-800 p-2.5 rounded">
-              <span className="text-slate-500 font-mono text-[9px] uppercase">Cypher Summary</span>
-              <p className="text-slate-300 text-xs mt-1 leading-relaxed">{data.summary || 'No entity summary generated.'}</p>
-            </div>
-          </div>
-        )}
-
-        {/* VECTOR CHUNK INSPECTOR */}
-        {type === 'chunk' && data && (
-          <div className="space-y-4">
-            <div className="bg-slate-900 border border-slate-800 p-2.5 rounded space-y-1">
-              <span className="text-slate-500 font-bold text-[9px] block">CHUNK #{data.id}</span>
-              <h4 className="text-slate-100 font-semibold text-xs font-sans line-clamp-2">{data.documentTitle}</h4>
-              <a href={data.sourceUrl} target="_blank" rel="noreferrer" className="text-cyan-400 hover:underline flex items-center space-x-1 text-[10px] font-mono mt-1 select-all">
-                <span className="truncate max-w-[200px]">{data.sourceUrl}</span>
-                <ExternalLink className="w-3 h-3 shrink-0" />
-              </a>
-            </div>
-
-            <div className="bg-slate-900 border border-slate-800 p-2 rounded">
-              <span className="text-slate-500 text-[9px] uppercase">COSINE SCORE</span>
-              <p className="text-emerald-400 font-bold text-sm font-mono">{(data.similarityScore * 100).toFixed(1)}%</p>
-            </div>
-
-            <div className="space-y-1">
-              <span className="text-slate-500 text-[9px] uppercase">Retrieved Content Chunk</span>
-              <p className="bg-slate-900 border border-slate-800 p-2 rounded text-slate-300 text-xs leading-relaxed font-sans">
-                {data.chunkPreview}
+        {/* ── Entity ───────────────────────────────────────────────────────── */}
+        {type === 'entity' && (
+          <>
+            <Summary rows={[['Type', str(d.type) || '—']]} />
+            {str(d.canonicalId) ? (
+              <p className="text-micro text-ink-faint font-mono break-all">{str(d.canonicalId)}</p>
+            ) : null}
+            <Section label="Summary">
+              <p className="text-micro text-ink-muted leading-relaxed">
+                {str(d.summary) || 'No summary was generated for this entity.'}
               </p>
-            </div>
-          </div>
+            </Section>
+          </>
         )}
 
-        {/* REPORT INSPECTOR */}
-        {type === 'report' && data && (
-          <div className="space-y-4 font-sans text-xs">
-            <div className="bg-slate-900 border border-slate-800 p-2.5 rounded space-y-1">
-              <span className="text-slate-500 font-mono text-[9px] block">REPORT TELEMETRY</span>
-              <h4 className="text-slate-100 font-semibold text-xs truncate">{data.title}</h4>
-              <p className="text-slate-400 text-[10px] font-mono">Gen time: {data.generatedAt}</p>
-            </div>
-
-            <div className="bg-slate-900 border border-slate-800 p-2 rounded font-mono">
-              <div className="flex items-center justify-between text-[11px] border-b border-slate-800 pb-1.5 mb-1.5">
-                <span>Sources Scraped:</span>
-                <span className="text-cyan-400 font-bold">{data.sourcesCount}</span>
-              </div>
-              <div className="flex items-center justify-between text-[11px]">
-                <span>KG Triples Mined:</span>
-                <span className="text-purple-400 font-bold">{data.entitiesCount}</span>
-              </div>
-            </div>
-          </div>
-        )}
-
-        {/* CITATION INSPECTOR */}
-        {type === 'citation' && data && (
-          <div className="space-y-3 font-sans text-xs">
-            <span className="text-slate-500 font-mono text-[9px] block">SOURCE CITATION</span>
-            <div className="bg-slate-900 border border-slate-800 p-2.5 rounded space-y-2">
-              <a href={data} target="_blank" rel="noreferrer" className="text-cyan-400 hover:underline flex items-center space-x-1 select-all break-all">
-                <span>{data}</span>
+        {/* ── Chunk ────────────────────────────────────────────────────────── */}
+        {type === 'chunk' && (
+          <>
+            <Summary
+              rows={[
+                ['Score', `${pct(d.similarityScore)}%`],
+                ['Tokens', num(d.tokenCount).toLocaleString()],
+              ]}
+            />
+            {str(d.sourceUrl) ? (
+              <a
+                href={str(d.sourceUrl)}
+                target="_blank"
+                rel="noreferrer"
+                className="flex items-center gap-1.5 text-micro text-ink hover:underline break-all"
+              >
+                <span className="truncate">{str(d.sourceUrl)}</span>
                 <ExternalLink className="w-3.5 h-3.5 shrink-0" />
               </a>
-            </div>
-          </div>
+            ) : null}
+            <Section label="Content">
+              <p className="text-micro text-ink-muted leading-relaxed">{str(d.chunkPreview)}</p>
+            </Section>
+          </>
         )}
 
-        {/* EXECUTION PROMPT INSPECTOR */}
-        {type === 'prompt' && data && (
-          <div className="space-y-3 font-sans text-xs">
-            <div className="flex items-center justify-between text-slate-500 font-mono text-[9px]">
-              <span>PROMPT TEXT</span>
-              <button onClick={() => handleCopy(data)} className="hover:text-slate-200">
-                {copied ? <Check className="w-3 h-3 text-emerald-400" /> : <Copy className="w-3 h-3" />}
-              </button>
-            </div>
-            <pre className="bg-slate-900 border border-slate-800 p-2 rounded text-slate-300 text-[10px] font-mono whitespace-pre-wrap max-h-96 overflow-y-auto">
-              {data}
-            </pre>
-          </div>
+        {/* ── Report ───────────────────────────────────────────────────────── */}
+        {type === 'report' && (
+          <Summary
+            rows={[
+              ['Generated', str(d.generatedAt) || '—'],
+              ['Sources', num(d.sourcesCount).toLocaleString()],
+              ['Entities', num(d.entitiesCount).toLocaleString()],
+            ]}
+          />
+        )}
+
+        {/* ── Citation ─────────────────────────────────────────────────────── */}
+        {type === 'citation' && (
+          <a
+            href={str(data)}
+            target="_blank"
+            rel="noreferrer"
+            className="flex items-center gap-1.5 text-micro text-ink hover:underline break-all"
+          >
+            <span className="truncate">{str(data)}</span>
+            <ExternalLink className="w-3.5 h-3.5 shrink-0" />
+          </a>
+        )}
+
+        {/* ── Prompt ───────────────────────────────────────────────────────── */}
+        {type === 'prompt' && (
+          <Pre text={str(data)} onCopy={() => handleCopy(str(data))} copied={copied} maxHeight="max-h-96" />
         )}
       </div>
     </aside>
   );
 };
+
+const Summary: React.FC<{ rows: [string, string][] }> = ({ rows }) => (
+  <dl className="divide-y divide-border border border-rule rounded-md bg-paper overflow-hidden">
+    {rows.map(([label, value]) => (
+      <div key={label} className="flex items-center justify-between gap-3 px-3 py-2">
+        <dt className="text-micro text-ink-faint">{label}</dt>
+        <dd className="text-micro text-ink font-mono truncate">{value}</dd>
+      </div>
+    ))}
+  </dl>
+);
+
+const Section: React.FC<{ label: string; children: React.ReactNode }> = ({ label, children }) => (
+  <div className="space-y-1.5">
+    <p className="text-micro uppercase tracking-[0.1em] text-ink-faint">{label}</p>
+    {children}
+  </div>
+);
+
+const Pre: React.FC<{
+  text: string;
+  onCopy?: () => void;
+  copied?: boolean;
+  maxHeight?: string;
+}> = ({ text, onCopy, copied, maxHeight }) => (
+  <div className="relative bg-paper border border-rule rounded-md">
+    {onCopy ? (
+      <button
+        type="button"
+        onClick={onCopy}
+        className="absolute top-1.5 right-1.5 p-1 text-ink-faint hover:text-ink rounded transition-colors"
+        aria-label="Copy"
+      >
+        {copied ? <Check className="w-3.5 h-3.5 text-ink" /> : <Copy className="w-3.5 h-3.5" />}
+      </button>
+    ) : null}
+    <pre className={`text-micro text-ink-muted font-mono whitespace-pre-wrap break-words p-2.5 overflow-y-auto ${maxHeight ?? ''}`}>
+      {text}
+    </pre>
+  </div>
+);
+
+export default RightInspector;

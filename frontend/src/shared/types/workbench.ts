@@ -68,6 +68,8 @@ export interface VectorChunk {
   similarityScore: number;
   tokenCount: number;
   chunkPreview: string;
+  /** True when a claim's verified quote was taken from this passage. */
+  cited?: boolean;
 }
 
 export interface RedisEventLog {

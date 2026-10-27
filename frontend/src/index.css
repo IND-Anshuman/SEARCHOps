@@ -2,50 +2,714 @@
 @tailwind components;
 @tailwind utilities;
 
+/* ── Typefaces ──────────────────────────────────────────────────────────────
+   Five voices, strictly assigned (see DESIGN.md):
+     Fraunces       display  — masthead, report title, section heads, quotes
+     Source Serif 4 reading  — the report body, at a 68ch measure
+     Instrument Sans interface — all chrome
+     JetBrains Mono data     — measured numbers and IDs only
+   The @font-face links live in index.html: a CSS @import placed after
+   @tailwind is invalid, and PostCSS rejects the entire stylesheet. */
+
 @layer base {
   :root {
+    color-scheme: light;
+    /* The paper stack — warmed down and deepened to eliminate harsh glare */
+    --paper-rgb: 235, 230, 220;
+    --paper-raised-rgb: 242, 237, 227;
+    --paper-inset-rgb: 224, 217, 204;
+    --paper-deep-rgb: 208, 200, 185;
+    --ink-rgb: 19, 17, 13;
+    --ink-muted-rgb: 76, 70, 60;
+    --ink-faint-rgb: 122, 114, 102;
+    --ink-ghost-rgb: 162, 154, 140;
+    --rule-rgb: 205, 197, 180;
+    --rule-strong-rgb: 172, 161, 142;
+
+    --paper: rgb(var(--paper-rgb));
+    --paper-raised: rgb(var(--paper-raised-rgb));
+    --paper-inset: rgb(var(--paper-inset-rgb));
+    --paper-deep: rgb(var(--paper-deep-rgb));
+    --ink: rgb(var(--ink-rgb));
+    --ink-muted: rgb(var(--ink-muted-rgb));
+    --ink-faint: rgb(var(--ink-faint-rgb));
+    --ink-ghost: rgb(var(--ink-ghost-rgb));
+    --rule: rgb(var(--rule-rgb));
+    --rule-strong: rgb(var(--rule-strong-rgb));
+  }
+
+  .dark {
     color-scheme: dark;
+    /* The Carbon Intaglio archive stack */
+    --paper-rgb: 18, 17, 14;
+    --paper-raised-rgb: 26, 24, 21;
+    --paper-inset-rgb: 12, 11, 9;
+    --paper-deep-rgb: 6, 5, 4;
+    --ink-rgb: 235, 231, 222;
+    --ink-muted-rgb: 175, 169, 157;
+    --ink-faint-rgb: 125, 119, 108;
+    --ink-ghost-rgb: 80, 75, 66;
+    --rule-rgb: 44, 40, 35;
+    --rule-strong-rgb: 68, 62, 54;
+
+    --paper: rgb(var(--paper-rgb));
+    --paper-raised: rgb(var(--paper-raised-rgb));
+    --paper-inset: rgb(var(--paper-inset-rgb));
+    --paper-deep: rgb(var(--paper-deep-rgb));
+    --ink: rgb(var(--ink-rgb));
+    --ink-muted: rgb(var(--ink-muted-rgb));
+    --ink-faint: rgb(var(--ink-faint-rgb));
+    --ink-ghost: rgb(var(--ink-ghost-rgb));
+    --rule: rgb(var(--rule-rgb));
+    --rule-strong: rgb(var(--rule-strong-rgb));
   }
-  
+
+  html {
+    -webkit-text-size-adjust: 100%;
+  }
+
   body {
-    background-color: #020617;
-    color: #f8fafc;
-    font-family: 'JetBrains Mono', monospace;
+    background-color: var(--paper);
+    background-image:
+      radial-gradient(ellipse at 50% -10%, rgba(255, 252, 242, 0.45) 0%, rgba(225, 218, 204, 0.6) 100%),
+      linear-gradient(180deg, var(--paper) 0%, var(--paper-inset) 100%);
+    color: var(--ink);
+    font-family: 'Instrument Sans', system-ui, -apple-system, 'Segoe UI', sans-serif;
+    font-size: 0.9375rem;
+    line-height: 1.55;
+    -webkit-font-smoothing: antialiased;
+    -moz-osx-font-smoothing: grayscale;
+    font-feature-settings: 'kern' 1, 'liga' 1;
+    transition: background-color 200ms ease, color 200ms ease;
+  }
+
+  .dark body {
+    background-image:
+      radial-gradient(ellipse at 50% -10%, rgba(32, 29, 24, 0.5) 0%, rgba(10, 9, 8, 0.85) 100%),
+      linear-gradient(180deg, var(--paper) 0%, var(--paper-inset) 100%);
+  }
+
+  /* ── The paper itself ───────────────────────────────────────────────────
+     Real paper has grain. In dark mode, it manifests as faint soot and carbon fiber. */
+  body::before {
+    content: '';
+    position: fixed;
+    inset: 0;
+    pointer-events: none;
+    z-index: 0;
+    opacity: 0.5;
+    background-image:
+      repeating-linear-gradient(
+        92deg,
+        rgba(19, 17, 13, 0.016) 0px,
+        rgba(19, 17, 13, 0) 1px,
+        rgba(19, 17, 13, 0) 3px,
+        rgba(19, 17, 13, 0.012) 4px
+      ),
+      repeating-linear-gradient(
+        3deg,
+        rgba(19, 17, 13, 0.012) 0px,
+        rgba(19, 17, 13, 0) 2px,
+        rgba(19, 17, 13, 0) 5px,
+        rgba(19, 17, 13, 0.01) 6px
+      );
+    transition: opacity 200ms ease;
+  }
+
+  .dark body::before {
+    opacity: 0.35;
+    background-image:
+      repeating-linear-gradient(
+        92deg,
+        rgba(255, 255, 255, 0.016) 0px,
+        rgba(255, 255, 255, 0) 1px,
+        rgba(255, 255, 255, 0) 3px,
+        rgba(255, 255, 255, 0.012) 4px
+      ),
+      repeating-linear-gradient(
+        3deg,
+        rgba(255, 255, 255, 0.012) 0px,
+        rgba(255, 255, 255, 0) 2px,
+        rgba(255, 255, 255, 0) 5px,
+        rgba(255, 255, 255, 0.01) 6px
+      );
+  }
+
+  /* Tactile Gradients & 3D Depth Utilities */
+  .paper-wash {
+    background-image: linear-gradient(180deg, rgba(255, 255, 255, 0.5) 0%, rgba(224, 216, 202, 0.65) 100%);
+  }
+  .dark .paper-wash {
+    background-image: linear-gradient(180deg, rgba(34, 31, 26, 0.85) 0%, rgba(16, 15, 12, 0.95) 100%);
+  }
+
+  .header-gradient {
+    background-image: linear-gradient(180deg, rgba(255, 255, 255, 0.55) 0%, rgba(226, 219, 204, 0.75) 100%);
+  }
+  .dark .header-gradient {
+    background-image: linear-gradient(180deg, rgba(34, 31, 26, 0.95) 0%, rgba(18, 17, 14, 0.95) 100%);
+  }
+
+  .sheet-raised {
+    background-image: linear-gradient(180deg, #FBF8F0 0%, #F1EADC 45%, #E6DEC9 100%);
+    box-shadow: 0 1px 3px rgba(60, 50, 30, 0.08), 0 8px 28px -4px rgba(60, 50, 30, 0.12), inset 0 1px 0 rgba(255, 255, 255, 0.9);
+  }
+  .dark .sheet-raised {
+    background-image: linear-gradient(180deg, #201E1A 0%, #171613 50%, #11100E 100%);
+    box-shadow: 0 2px 6px rgba(0, 0, 0, 0.6), 0 10px 28px -4px rgba(0, 0, 0, 0.75), inset 0 1px 0 rgba(255, 255, 255, 0.05);
+  }
+
+  .intaglio-well {
+    background-image: linear-gradient(180deg, rgba(212, 203, 187, 0.55) 0%, rgba(234, 228, 216, 0.3) 100%);
+    box-shadow: inset 0 2px 4px rgba(60, 50, 30, 0.12), inset 0 0 0 1px rgba(60, 50, 30, 0.08), 0 1px 0 rgba(255, 255, 255, 0.8);
+  }
+  .dark .intaglio-well {
+    background-image: linear-gradient(180deg, rgba(8, 7, 6, 0.8) 0%, rgba(16, 15, 13, 0.6) 100%);
+    box-shadow: inset 0 2px 5px rgba(0, 0, 0, 0.8), inset 0 0 0 1px rgba(255, 255, 255, 0.03), 0 1px 0 rgba(255, 255, 255, 0.02);
+  }
+
+  .card-beveled {
+    border-radius: 6px;
+    box-shadow: 0 1px 2px rgba(0, 0, 0, 0.04), 0 4px 12px -2px rgba(0, 0, 0, 0.05);
+  }
+  .dark .card-beveled {
+    box-shadow: 0 1px 3px rgba(0, 0, 0, 0.5), 0 6px 16px -2px rgba(0, 0, 0, 0.6);
+  }
+
+  .tactile-btn {
+    transition: all 120ms cubic-bezier(0.16, 1, 0.3, 1);
+  }
+  .tactile-btn:hover {
+    transform: translateY(-0.5px);
+  }
+  .tactile-btn:active {
+    transform: translateY(1px);
+  }
+
+  /* ── The report reads as a typeset document ─────────────────────────────
+     A reading face at a literary measure, not a UI face at a cramped one.
+     Every element inside .prose inherits the serif; the chrome around it
+     stays in the grotesque. */
+  .prose {
+    font-family: 'Source Serif 4', Georgia, serif;
+    font-size: 1.0625rem;
+    line-height: 1.62;
+    color: var(--ink);
+    max-width: 68ch;
+    /* Optical alignment: the serif's side bearings hang slightly, and a
+       little negative margin gets the text block optically centred rather
+       than mathematically centred. */
+    margin-inline: -0.02em;
+  }
+
+  .prose > * + * {
+    margin-top: 1.1em;
+  }
+
+  .prose h1,
+  .prose h2,
+  .prose h3,
+  .prose h4 {
+    font-family: 'Fraunces', Georgia, serif;
+    font-weight: 600;
+    letter-spacing: -0.015em;
+    color: var(--ink);
+    /* More space above a heading than below it, always. */
+    margin-top: 2.2em;
+    margin-bottom: 0.6em;
+    line-height: 1.18;
+    text-wrap: balance;
+  }
+  .prose h1 {
+    font-size: 2.5rem;
+    letter-spacing: -0.025em;
+  }
+  .prose h2 {
+    font-size: 1.75rem;
+    letter-spacing: -0.02em;
+    /* A letterpress rule under a section head, not a coloured border-left.
+       The double rule — a heavy hairline over a light one — is the printed
+       convention for a section break, and it is the most "book-like" rule
+       available without colour. */
+    padding-bottom: 0.5rem;
+    border-bottom: 1px solid var(--rule-strong);
+    box-shadow: 0 3px 0 -2px var(--rule);
+  }
+  .prose h3 {
+    font-size: 1.3125rem;
+  }
+  .prose h4 {
+    font-size: 1.0625rem;
+    font-style: italic;
+    font-weight: 500;
+  }
+
+  .prose p { margin: 0; }
+  .prose strong { font-weight: 600; }
+  .prose em { font-style: italic; }
+
+  /* ── The drop cap ───────────────────────────────────────────────────────
+     The first paragraph of a document opens with a raised capital. It is the
+     oldest typographic device there is and it still says "this is a
+     document" more clearly than anything else available without colour. */
+  .prose > p:first-of-type::first-letter,
+  .dropcap > p:first-of-type::first-letter {
+    font-family: 'Fraunces', Georgia, serif;
+    font-weight: 600;
+    float: left;
+    font-size: 3.6em;
+    line-height: 0.84;
+    padding: 0.06em 0.09em 0 0;
+    margin-right: 0.02em;
+    color: var(--ink);
+  }
+
+  .prose ul,
+  .prose ol {
+    padding-left: 1.35em;
+    margin: 0;
+  }
+  .prose ul { list-style: none; padding-left: 1.1em; }
+  .prose ul > li { position: relative; }
+  .prose ul > li::before {
+    content: '';
+    position: absolute;
+    left: -0.85em;
+    top: 0.66em;
+    width: 4px;
+    height: 4px;
+    border-radius: 999px;
+    background: var(--rule-strong);
+  }
+  .prose ol { list-style: decimal; }
+  .prose li + li { margin-top: 0.4em; }
+  .prose li::marker { color: var(--ink-faint); font-size: 0.9em; }
+
+  .prose blockquote {
+    /* An indented, ruled excerpt — a pull quote, not a coloured callout. */
+    border-left: 2px solid var(--rule-strong);
+    padding-left: 1.1em;
+    font-style: italic;
+    color: var(--ink-muted);
+  }
+  .prose blockquote p:first-of-type::first-letter {
+    float: none;
+    font-size: inherit;
+    line-height: inherit;
+    padding: 0;
+    margin: 0;
+  }
+
+  .prose code {
+    font-family: 'JetBrains Mono', ui-monospace, monospace;
+    font-size: 0.86em;
+    background: var(--paper-inset);
+    padding: 0.1em 0.32em;
+    border-radius: 1px;
+  }
+
+  .prose pre {
+    font-family: 'JetBrains Mono', ui-monospace, monospace;
+    font-size: 0.8125rem;
+    line-height: 1.55;
+    background: var(--paper-inset);
+    border: 1px solid var(--rule);
+    border-radius: 1px;
+    padding: 0.9rem 1rem;
+    overflow-x: auto;
+  }
+  .prose pre code { background: none; padding: 0; font-size: inherit; }
+
+  .prose hr {
+    border: 0;
+    border-top: 1px solid var(--rule);
+    margin: 2.4em 0;
+    /* A centred ornament: the short rule with a diamond, the way a printed
+       section break carries one. */
+    position: relative;
+  }
+  .prose hr::after {
+    content: '';
+    position: absolute;
+    left: 50%;
+    top: -2.5px;
+    width: 5px;
+    height: 5px;
+    transform: translateX(-50%) rotate(45deg);
+    background: var(--rule-strong);
+  }
+
+  .prose table {
+    width: 100%;
+    border-collapse: collapse;
+    font-family: 'Instrument Sans', system-ui, sans-serif;
+    font-size: 0.8125rem;
+  }
+  .prose th {
+    text-align: left;
+    font-weight: 600;
+    color: var(--ink-muted);
+    padding: 0.5rem 0.7rem;
+    border-bottom: 1px solid var(--rule-strong);
+    font-size: 0.6875rem;
+    letter-spacing: 0.12em;
+    text-transform: uppercase;
+  }
+  .prose td {
+    padding: 0.5rem 0.7rem;
+    border-bottom: 1px solid var(--rule);
+    vertical-align: top;
+  }
+
+  .prose a {
+    color: var(--ink);
+    text-decoration: underline;
+    text-decoration-color: var(--rule-strong);
+    text-underline-offset: 0.18em;
+    text-decoration-thickness: 1px;
+  }
+  .prose a:hover {
+    text-decoration-color: var(--ink);
+  }
+
+  /* ── Report apparatus inside the prose ────────────────────────────────
+     A block-rendered report: each block is its own wrapper, so spacing
+     comes from the wrappers rather than sibling paragraphs. */
+  .report-doc { max-width: none; }
+  .report-doc [data-block-id] > * + * { margin-top: 1.1em; }
+  .report-doc h2 { scroll-margin-top: 1.5rem; }
+  .report-doc h3 { margin-top: 1.8em; }
+
+  /* Citation markers: small, quiet, and clickable. */
+  .prose sup.cite {
+    font-family: 'JetBrains Mono', ui-monospace, monospace;
+    font-size: 0.66em;
+    line-height: 0;
+    margin-left: 1px;
+  }
+  .prose sup.cite a {
+    color: var(--ink-faint);
+    text-decoration: none;
+  }
+  .prose sup.cite a:hover { color: var(--ink); }
+
+  /* A key takeaway / bottom line is the answer, so it is set as a ruled
+     panel in the body face, not as an italic pull quote. */
+  .prose blockquote.callout {
+    font-style: normal;
+    color: var(--ink);
+    background: var(--paper-inset);
+    border-left: 3px solid var(--ink);
+    padding: 0.85em 1.15em;
+    border-radius: 2px;
+  }
+  .prose blockquote.callout strong {
+    font-family: 'Instrument Sans', system-ui, sans-serif;
+    font-size: 0.72em;
+    letter-spacing: 0.12em;
+    text-transform: uppercase;
+    color: var(--ink-muted);
+    margin-right: 0.35em;
+  }
+
+  /* Wide tables scroll inside the measure instead of breaking it. */
+  .prose .table-wrap {
+    overflow-x: auto;
+    border-top: 1px solid var(--rule-strong);
+    margin-block: 1.4em;
+  }
+  .prose .table-wrap table { min-width: 28rem; }
+  .prose tbody tr:nth-child(even) td { background: color-mix(in srgb, var(--paper-inset) 55%, transparent); }
+
+  /* ── Browser surfaces ─────────────────────────────────────────────────
+     The parts we did not draw still carry the design. This is the cheapest
+     signal that a page was built rather than assembled, and the one a
+     generator skips most reliably. */
+  ::selection {
+    background: #d8d1c1;
+    color: var(--ink);
+  }
+
+  :focus-visible {
+    outline: 2px solid var(--ink);
+    outline-offset: 2px;
+    border-radius: 1px;
+  }
+  /* Keyboard focus only — a mouse click should not draw a ring. */
+  :focus:not(:focus-visible) { outline: none; }
+
+  input,
+  textarea,
+  select,
+  button {
+    font: inherit;
+    color: inherit;
+  }
+
+  input[type='text']::selection,
+  textarea::selection { background: #d8d1c1; }
+
+  ::-webkit-scrollbar {
+    width: 10px;
+    height: 10px;
+  }
+  ::-webkit-scrollbar-track {
+    background: var(--paper-inset);
+  }
+  ::-webkit-scrollbar-thumb {
+    background: var(--rule-strong);
+    border-radius: 999px;
+    border: 3px solid var(--paper-inset);
+  }
+  ::-webkit-scrollbar-thumb:hover {
+    background: var(--ink-faint);
+  }
+  /* Firefox */
+  * {
+    scrollbar-width: thin;
+    scrollbar-color: var(--rule-strong) var(--paper-inset);
   }
 }
 
-/* Custom Scrollbars for High Density IDE UI */
-::-webkit-scrollbar {
-  width: 6px;
-  height: 6px;
+@layer components {
+  /* ── The status marks ───────────────────────────────────────────────────
+     The product has no colour. A status is carried by the FILL PATTERN of
+     its mark, exactly the way a printed form distinguishes its checkboxes:
+
+       ■  filled    — supported, settled, certain
+       ▨  half      — contested, held open, in question
+       □  empty     — refuted, emptied out, negated
+       ░  dotted    — unverified, not yet filled
+       —  rule      — not measured, no mark at all
+
+     A reader who cannot see colour still reads the status correctly. */
+  .mark {
+    display: inline-block;
+    width: 0.625em;
+    height: 0.625em;
+    border: 1px solid currentColor;
+    flex-shrink: 0;
+    transform: translateY(0.02em);
+  }
+  .mark-filled { background: currentColor; }
+  .mark-half {
+    /* Filled from the left, not the bottom: at 10px a bottom-filled square
+       reads as empty, which would make "contested" indistinguishable from
+       "refuted". A left-filled square reads as partly filled at any size. */
+    background: linear-gradient(
+      to right,
+      currentColor 0 50%,
+      transparent 50% 100%
+    );
+  }
+  .mark-empty { background: transparent; }
+  .mark-dotted {
+    background: repeating-linear-gradient(
+      45deg,
+      currentColor 0 1px,
+      transparent 1px 3px
+    );
+  }
+  .mark-none {
+    background: transparent;
+    border: 0;
+    border-top: 1px solid currentColor;
+    height: 0;
+    transform: translateY(-0.16em);
+  }
+
+  /* A ruled form field: the label above, the value in mono, the rule under.
+     This is the shape of every printed form, and it is the shape every
+     measured figure in this product takes. */
+  .field {
+    display: block;
+    padding-bottom: 3px;
+    border-bottom: 1px solid var(--rule);
+  }
+  .field-label {
+    display: block;
+    font-size: 0.6875rem;
+    line-height: 1.35;
+    letter-spacing: 0.14em;
+    text-transform: uppercase;
+    color: var(--ink-faint);
+  }
+  .field-value {
+    display: block;
+    font-family: 'JetBrains Mono', ui-monospace, monospace;
+    font-size: 0.8125rem;
+    font-variant-numeric: tabular-nums;
+    color: var(--ink);
+  }
 }
 
-::-webkit-scrollbar-track {
-  background: #090d16;
+@layer utilities {
+  /* Tabular figures for every measured number. A figure that jitters as it
+     updates is a figure that reads as unstable. */
+  .tnum {
+    font-variant-numeric: tabular-nums;
+    font-feature-settings: 'tnum' 1;
+  }
+
+  /* The running head, and every structural label. Letterspaced small caps
+     are how a printed form labels its fields. */
+  .folio {
+    font-size: 0.6875rem;
+    line-height: 1;
+    letter-spacing: 0.14em;
+    text-transform: uppercase;
+    color: var(--ink-faint);
+  }
+
+  /* A list in the report body. The bullet is a small filled dot rather than
+     the browser's default disc, and the marker colour is a rule tone, so the
+     list belongs to the paper rather than to the platform. */
+  .prose-list {
+    list-style: none;
+    padding-left: 1.1em;
+  }
+  .prose-list > li {
+    position: relative;
+  }
+  .prose-list > li::before {
+    content: '';
+    position: absolute;
+    left: -0.85em;
+    top: 0.66em;
+    width: 4px;
+    height: 4px;
+    border-radius: 999px;
+    background: var(--rule-strong);
+  }
+  .prose-list > li + li {
+    margin-top: 0.4em;
+  }
 }
 
-::-webkit-scrollbar-thumb {
-  background: #1e293b;
-  border-radius: 2px;
+@media (prefers-reduced-motion: reduce) {
+  *,
+  *::before,
+  *::after {
+    animation-duration: 0.001ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.001ms !important;
+  }
 }
 
-::-webkit-scrollbar-thumb:hover {
-  background: #334155;
-}
+/* ── Browser print-to-PDF of a report ─────────────────────────────────────────
+   Used when the server has no PDF renderer (the API-only deployment). The
+   report is copied into a top-level #print-root (shared/lib/printReport.ts);
+   these rules print only that, set to match the server export
+   (application/exports/pdf_export.py): A4, Georgia, ruled headings, bordered
+   tables. ID selectors outrank the app's utility classes, and colours are fixed
+   so a dark-mode screen still prints as black on white. */
+#print-root { display: none; }
 
-/* High Contrast Code & Terminal Syntax */
-.terminal-output {
-  font-family: 'JetBrains Mono', monospace;
-  line-height: 1.45;
-  letter-spacing: -0.01em;
-}
+@media print {
+  @page { size: A4; margin: 2cm 1.8cm; }
 
-/* Custom Pulsing Status Animations */
-@keyframes nodePulse {
-  0%, 100% { opacity: 1; transform: scale(1); }
-  50% { opacity: 0.65; transform: scale(0.98); }
-}
+  body.printing-report > *:not(#print-root) { display: none !important; }
+  body.printing-report {
+    background: #fff !important;
+    height: auto !important;
+    overflow: visible !important;
+  }
+  body.printing-report #print-root { display: block; }
+  /* The paper-grain overlay is a fixed layer above unpositioned content: in
+     print it repeats on every page and washes the text out to grey. */
+  body.printing-report::before,
+  body.printing-report::after { display: none !important; }
 
-.animate-node-pulse {
-  animation: nodePulse 2s cubic-bezier(0.4, 0, 0.6, 1) infinite;
+  #print-root {
+    font-family: Georgia, 'Times New Roman', serif;
+    font-size: 10.5pt;
+    line-height: 1.42;
+    color: #1a1a1a;
+    -webkit-print-color-adjust: exact;
+    print-color-adjust: exact;
+  }
+  #print-root * {
+    color: inherit;
+    font-size: inherit; /* the screen's .prose sizes are larger than print's 10.5pt */
+    background: transparent;
+    box-shadow: none;
+    max-width: none;
+    animation: none;
+    font-family: inherit;
+  }
+
+  #print-root h1 {
+    font-size: 22pt;
+    line-height: 1.2;
+    margin: 0 0 6pt;
+    padding-bottom: 6pt;
+    border-bottom: 2px solid #333;
+    color: #1a1a2e;
+  }
+  #print-root h2 {
+    font-size: 14pt;
+    margin: 18px 0 8px;
+    padding-bottom: 4px;
+    border-bottom: 1px solid #ddd;
+    color: #1a1a2e;
+  }
+  #print-root h3 { font-size: 11.5pt; margin: 12px 0 5px; color: #333; font-weight: bold; }
+  #print-root h4 { font-size: 10.5pt; margin: 10px 0 4px; color: #444; font-style: italic; }
+  #print-root h2, #print-root h3, #print-root h4 { break-after: avoid; page-break-after: avoid; }
+
+  #print-root p { margin: 6px 0; orphans: 3; widows: 3; }
+  #print-root ul, #print-root ol { margin: 6px 0 6px 18px; padding: 0; }
+  #print-root ul { list-style: disc; }
+  #print-root ol { list-style: decimal; }
+  #print-root li { margin: 2px 0; }
+
+  #print-root blockquote {
+    border-left: 3px solid #999;
+    margin: 10px 0;
+    padding: 2px 0 2px 12px;
+    color: #444;
+    font-style: italic;
+    break-inside: avoid;
+  }
+  #print-root blockquote.callout {
+    font-style: normal;
+    color: #1a1a2e;
+    background: #f3f5f9;
+    border-left: 4px solid #1a1a2e;
+    padding: 8px 14px;
+  }
+
+  #print-root .table-wrap { overflow: visible; }
+  #print-root table {
+    border-collapse: collapse;
+    width: 100%;
+    font-size: 9.5pt;
+    margin: 10px 0;
+    break-inside: avoid;
+  }
+  #print-root th {
+    background: #f0f0f0;
+    font-weight: bold;
+    border: 1px solid #bbb;
+    padding: 5px 8px;
+    text-align: left;
+  }
+  #print-root td { border: 1px solid #bbb; padding: 4px 6px; text-align: left; vertical-align: top; }
+  #print-root tr:nth-child(even) td { background: #fafafa; }
+  #print-root thead { display: table-header-group; } /* repeat headers across pages */
+
+  #print-root pre {
+    background: #f4f4f4;
+    padding: 8px;
+    font-size: 9pt;
+    border-left: 3px solid #666;
+    white-space: pre-wrap;
+  }
+  #print-root code { font-family: 'DejaVu Sans Mono', Consolas, monospace; font-size: 9.5pt; }
+
+  #print-root a { color: #1a4d8f; text-decoration: none; word-break: break-word; }
+  #print-root sup.cite { font-size: 7pt; color: #777; line-height: 0; }
+  #print-root sup.cite a { color: #777; }
+  #print-root hr { border: 0; border-top: 1px solid #ddd; margin: 12px 0; }
+  #print-root img, #print-root svg { max-width: 100%; break-inside: avoid; }
 }
