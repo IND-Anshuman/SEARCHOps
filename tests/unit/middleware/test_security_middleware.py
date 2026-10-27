@@ -5,6 +5,7 @@ Unit tests for RateLimiterMiddleware and APIKeyAuthMiddleware.
 from __future__ import annotations
 
 import pytest
+
 from searchops.middleware.rate_limiter import RedisSlidingWindowRateLimiter
 
 
@@ -12,7 +13,7 @@ from searchops.middleware.rate_limiter import RedisSlidingWindowRateLimiter
 @pytest.mark.asyncio
 async def test_sliding_window_rate_limiter_memory_fallback():
     limiter = RedisSlidingWindowRateLimiter(redis_client=None, limit=2, window_seconds=60)
-    
+
     allowed1, remaining1, _ = await limiter.is_allowed("client_1")
     assert allowed1 is True
     assert remaining1 == 1

@@ -117,7 +117,8 @@ def _reset_settings(monkeypatch, *, env, secret=KEY, api_key=None, disabled=Fals
     monkeypatch.setenv("APP_ENV", env)
     monkeypatch.setenv("APP_SECRET_KEY", secret)
     if api_key is None:
-        monkeypatch.delenv("SEARCHOPS_API_KEY", raising=False)
+        # Empty, not deleted: a deleted variable falls back to the developer's .env.
+        monkeypatch.setenv("SEARCHOPS_API_KEY", "")
     else:
         monkeypatch.setenv("SEARCHOPS_API_KEY", api_key)
     if disabled:

@@ -5,6 +5,7 @@ Unit tests for TransactionalEventOutbox.
 from __future__ import annotations
 
 import pytest
+
 from searchops.platform.events.outbox import TransactionalEventOutbox
 
 

@@ -5,10 +5,8 @@ Verifies that the JobStatusResponse Pydantic model correctly serializes
 all fields produced by ResearchApplicationService, with no field stripping.
 These tests caught audit finding F-12 (response schema missing telemetry fields).
 """
-from __future__ import annotations
 
-import pytest
-from pydantic import ValidationError
+from __future__ import annotations
 
 from searchops.api.v1.research import (
     JobStatusResponse,
@@ -17,8 +15,8 @@ from searchops.api.v1.research import (
     VectorChunkSchema,
 )
 
-
 # ── JobStatusResponse ─────────────────────────────────────────────────────────
+
 
 class TestJobStatusResponse:
     def test_all_telemetry_fields_present(self):
@@ -96,6 +94,7 @@ class TestJobStatusResponse:
 
 # ── LangGraphNodeSchema ───────────────────────────────────────────────────────
 
+
 class TestLangGraphNodeSchema:
     def test_node_schema_validation(self):
         node_data = {
@@ -124,6 +123,7 @@ class TestLangGraphNodeSchema:
 
 # ── VectorChunkSchema (alias handling) ───────────────────────────────────────
 
+
 class TestVectorChunkSchema:
     def test_snake_case_aliases(self):
         """Backend uses snake_case field names; schema must accept both aliases."""
@@ -142,6 +142,7 @@ class TestVectorChunkSchema:
 
 
 # ── LogItemSchema (alias handling) ────────────────────────────────────────────
+
 
 class TestLogItemSchema:
     def test_snake_case_aliases(self):
