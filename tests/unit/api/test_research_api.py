@@ -15,6 +15,7 @@ from fastapi.testclient import TestClient
 
 from searchops.api.v1.research import _get_service, router
 from searchops.application.research_service import ResearchApplicationService, ResearchJobStatus
+from searchops.core.context.research import ReportType
 
 # ── Helpers ───────────────────────────────────────────────────────────────────
 
@@ -59,6 +60,13 @@ def test_start_research_returns_202():
         # config=None means "use mode defaults" — scraping configuration is
         # user-tunable now, and omitting it keeps the previous behaviour.
         config=None,
+        # Report shape defaults to auto, which the writer resolves from the
+        # query at generation time.
+        report_type=ReportType.AUTO,
+        report_structure_prompt="",
+        target_pages=12,
+        report_theme="default",
+        owner_id="",  # API-key (service) caller: no Clerk user owns the job
     )
 
 
@@ -251,6 +259,41 @@ def test_get_research_graph():
 
 
 @pytest.mark.unit
+def test_get_research_graph_reads_the_field_names_the_pipeline_writes():
+    """Regression: the producer writes type/summary, not entity_type/description.
+
+    The graph endpoint used to read entity_type/description, so against a real
+    job every node degraded to the literal placeholder type "technology" with
+    an empty summary. The fixture above carries the invented key names, which
+    is why it stayed green. This feeds the dicts research_service.py builds.
+    """
+    mock_svc = AsyncMock(spec=ResearchApplicationService)
+    mock_svc.get_job_status.return_value = {
+        "job_id": "job-abc-123",
+        "status": "completed",
+        "entities": [
+            {
+                "id": "e1",
+                "canonical_id": "concept:transformer",
+                "name": "Transformer",
+                "type": "Concept",
+                "summary": "A neural architecture using self-attention.",
+                "confidence_score": 0.95,
+            }
+        ],
+        "relations": [],
+    }
+
+    client = TestClient(_build_test_app(mock_svc))
+    resp = client.get("/api/v1/research/job-abc-123/graph")
+    assert resp.status_code == 200
+    node = resp.json()["nodes"][0]
+    assert node["name"] == "Transformer"
+    assert node["type"] == "Concept"
+    assert node["summary"] == "A neural architecture using self-attention."
+
+
+@pytest.mark.unit
 def test_get_research_chunks():
     mock_svc = AsyncMock(spec=ResearchApplicationService)
     mock_svc.get_job_status.return_value = {
@@ -327,6 +370,11 @@ def test_start_research_accepts_corpus_mode() -> None:
         max_sources=40,
         mode="corpus",
         config=None,
+        report_type=ReportType.AUTO,
+        report_structure_prompt="",
+        target_pages=12,
+        report_theme="default",
+        owner_id="",
     )
 
 

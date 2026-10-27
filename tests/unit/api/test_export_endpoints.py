@@ -145,3 +145,25 @@ def test_export_failure_is_not_an_empty_200(monkeypatch):
 
     assert resp.status_code == 500
     assert "disk full" in resp.json()["detail"]
+
+
+@pytest.mark.unit
+def test_pdf_without_a_server_renderer_tells_the_browser_to_print(monkeypatch) -> None:
+    """API-only deployment: no Playwright, so the web app prints the page itself.
+
+    The 503 comes before the study guide is built — that is an LLM call, and
+    without a renderer there is nothing to spend it on.
+    """
+    import searchops.api.v1.research as research_api
+
+    monkeypatch.setattr(research_api, "pdf_export_available", lambda: False)
+    guide = AsyncMock()
+    monkeypatch.setattr(research_api, "_study_guide_for_export", guide)
+    client = TestClient(_build_test_app(_svc(_job_with_document())))
+
+    res = client.get("/api/v1/research/job-1/export/pdf")
+
+    assert res.status_code == 503
+    assert res.headers["x-pdf-fallback"] == "browser-print"
+    assert "print" in res.json()["detail"]
+    guide.assert_not_called()

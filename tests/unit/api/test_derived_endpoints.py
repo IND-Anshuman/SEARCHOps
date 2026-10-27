@@ -110,6 +110,81 @@ def test_glossary_empty_when_no_entities():
     assert resp.json()["terms"] == []
 
 
+def test_glossary_reads_the_field_names_the_pipeline_actually_writes():
+    """Regression: the producer writes type/summary/confidence_score.
+
+    The glossary used to read entity_type/description/confidence, so against a
+    real job every term came back with an empty type and an empty definition.
+    The object-shaped fixture above cannot catch that — it carries the invented
+    attribute names. This test feeds the dicts research_service.py builds.
+    """
+    payload = _job()
+    payload["report_document"]["entities"] = [
+        {
+            "id": "e1",
+            "canonical_id": "concept:surface-code",
+            "name": "Surface code",
+            "type": "Concept",
+            "summary": "A quantum error-correcting code laid out on a 2D lattice.",
+            "confidence_score": 0.95,
+        },
+        {
+            "id": "e2",
+            "canonical_id": "technology:gpu",
+            "name": "GPU",
+            "type": "Technology",
+            "summary": "",
+            "confidence_score": 0.80,
+        },
+    ]
+    resp = TestClient(_build_test_app(_svc(payload))).get("/derived/job-1/glossary")
+
+    assert resp.status_code == 200
+    by_term = {t["term"]: t for t in resp.json()["terms"]}
+    assert by_term["Surface code"]["entity_type"] == "Concept"
+    assert by_term["Surface code"]["definition"].startswith("A quantum error-correcting")
+    # A real entity with no description must stay empty, not be invented.
+    assert by_term["GPU"]["entity_type"] == "Technology"
+    assert by_term["GPU"]["definition"] == ""
+
+
+def test_glossary_survives_the_redis_round_trip():
+    """Regression: to_dict() must emit plain dicts, not live pydantic models.
+
+    JobStateManager serialises with orjson, which cannot encode a Claim or an
+    EvidenceGap. Before the fix the persisted state either failed to commit or
+    lost the gap and claim lists, so "Where to go next" reported zero gaps
+    after the critic had emitted them.
+    """
+    import orjson
+
+    payload = _job()
+    raw = payload["report_document"]
+    # The exact step the real path performs before storing in Redis.
+    stored = orjson.loads(orjson.dumps(raw))
+    payload["report_document"] = stored
+
+    resp = TestClient(_build_test_app(_svc(payload))).get("/derived/job-1/next-steps")
+    assert resp.status_code == 200
+    gaps = resp.json()["gaps"]
+    assert len(gaps) == 1
+    assert gaps[0]["description"].startswith("No data on cost")
+    assert gaps[0]["priority"] == 2
+
+
+def test_trust_counts_claims_after_the_redis_round_trip():
+    """Regression: claim statuses must survive serialisation."""
+    import orjson
+
+    payload = _job()
+    payload["report_document"] = orjson.loads(orjson.dumps(payload["report_document"]))
+
+    resp = TestClient(_build_test_app(_svc(payload))).get("/derived/job-1/trust")
+    assert resp.status_code == 200
+    assert resp.json()["summary"]["supported"] == 1
+    assert "verified against sources" in resp.json()["headline"]
+
+
 # ── Evidence gaps ────────────────────────────────────────────────────────────
 
 
@@ -142,7 +217,7 @@ def test_trust_summary_counts_real_claim_statuses():
     body = resp.json()
     assert body["summary"]["total"] == 1
     assert body["summary"]["supported"] == 1
-    assert "well-supported" in body["headline"]
+    assert "verified against sources" in body["headline"]
 
 
 def test_trust_summary_says_so_when_no_claims():
