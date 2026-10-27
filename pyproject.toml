@@ -78,7 +78,6 @@ dependencies = [
     "cryptography>=43.0.0",
     # ── Scraping ──────────────────────────────────────────────────────────
     "firecrawl-py>=1.5.0",
-    "playwright>=1.48.0",
     # ── Serialization ─────────────────────────────────────────────────────
     "orjson>=3.10.0",
     "pyyaml>=6.0.2",
@@ -93,18 +92,34 @@ dependencies = [
     "cachetools>=5.5.0",
     "langchain-google-genai>=4.3.2",
     "langchain-nvidia-ai-endpoints>=1.4.3",
-    "curl-cffi>=0.7.0",
-    "selectolax>=0.3.21",
-    "crawl4ai>=0.4.0",
-    "markdownify>=0.13.1",
-    "pymupdf>=1.24.0",
-    "duckdb>=1.1.0",
-    "docling>=2.0.0",
-    "datasketch>=1.6.0",
-    "outlines-core>=0.1.0",
+    "pyjwt[crypto]>=2.9,<3",
+    # Report exports. Declared here because dev only had them through docling,
+    # so the production image shipped without them and the API failed to import.
+    "python-pptx>=1.0.2",
+    "python-docx>=1.2.0",
+    "latex2mathml>=3.81.0",  # math in PDF exports
 ]
 
 [project.optional-dependencies]
+# The free, self-hosted web stack for TOOL_PROFILE=local: headless browser
+# (Playwright; run `playwright install chromium` too), Crawl4AI, stealth HTTP,
+# HTML pruning, PDF parsing and near-duplicate detection. The default API-only
+# deployment (Tavily for search and page text) needs none of it, and leaving
+# it out keeps the image small. The code stays in src/searchops/scraping/.
+local-tools = [
+    "playwright>=1.48.0",
+    "crawl4ai>=0.4.0",
+    "curl-cffi>=0.7.0",
+    "selectolax>=0.3.21",
+    "markdownify>=0.13.1",
+    "pymupdf>=1.24.0",
+    "duckdb>=1.1.0",
+    "datasketch>=1.6.0",
+    "outlines-core>=0.1.0",
+]
+# Layout-aware parsing of scanned PDFs. Pulls PyTorch (and CUDA wheels on Linux),
+# several GB, so the Docker image omits it; PyMuPDF handles text PDFs without it.
+documents = ["docling>=2.0.0"]
 dev = [
     "pytest>=8.3.0",
     "pytest-asyncio>=0.24.0",
@@ -141,6 +156,8 @@ allow-direct-references = true
 # ── uv ────────────────────────────────────────────────────────────────────────
 [dependency-groups]
 dev = [
+    "searchops[local-tools]",  # the free-tool code is still tested
+    "docling>=2.0.0",  # optional in production (see the `documents` extra)
     "pytest>=8.3.0",
     "pytest-asyncio>=0.24.0",
     "pytest-cov>=5.0.0",
@@ -206,6 +223,9 @@ known-first-party = ["searchops"]
 "src/searchops/llm/router.py" = ["S106"]
 "src/searchops/search/orchestrator.py" = ["S324"]
 "src/searchops/config/subsystems/api.py" = ["S104"]
+# Math rendering maps Unicode symbols (double-struck letters, set operators) on purpose.
+"src/searchops/application/exports/math_render.py" = ["RUF001", "RUF002", "RUF003"]
+"tests/unit/application/test_math_render.py" = ["RUF001", "RUF002", "RUF003"]
 # TC001 must be ignored in these three files: LangGraph calls get_type_hints()
 # on ResearchState at graph-build time and Pydantic resolves forward refs at
 # model-creation time — both need the real objects in module globals, not a
@@ -253,6 +273,8 @@ disable_error_code = [
     "var-annotated",
     "valid-type",
     "type-arg",
+    "no-untyped-call",
+    "unused-ignore",
 ]
 
 # ── pytest ────────────────────────────────────────────────────────────────────
