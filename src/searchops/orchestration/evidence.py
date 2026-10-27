@@ -31,6 +31,11 @@ class Citation(BaseModel):
     date: str = ""  # ISO-8601 best-effort
     author: str = ""
     excerpt: str = Field(default="", description="short verbatim span", max_length=280)
+    # The passage of the page the excerpt was found in, and whether the
+    # excerpt was confirmed verbatim against the page text (not just claimed
+    # by the model).
+    passage_id: str = ""
+    quote_verified: bool = False
 
 
 class EvidenceSpan(BaseModel):
@@ -50,6 +55,16 @@ class Claim(BaseModel):
     citations: list[Citation] = Field(default_factory=list)
     evidence: list[EvidenceSpan] = Field(default_factory=list)
     status: Literal["unverified", "supported", "contested", "refuted"] = "unverified"
+    # Filled by the verifier from source passages: which sources corroborate
+    # or contradict the claim, and a one-line reason for the verdict.
+    supporting_urls: list[str] = Field(default_factory=list)
+    contradicting_urls: list[str] = Field(default_factory=list)
+    verification_note: str = ""
+
+    @property
+    def grounded(self) -> bool:
+        """True when at least one citation's quote was found in its page."""
+        return any(c.quote_verified for c in self.citations)
 
 
 class EvidenceGap(BaseModel):
@@ -68,14 +83,14 @@ class EvidenceStore(BaseModel):
 
 
 def dedupe_claims(left: list[Claim] | None, right: list[Claim] | None) -> list[Claim]:
-    """LangGraph state reducer: merge claim deltas, dedupe by ``claim.id``.
+    """LangGraph state reducer: merge claim deltas, keyed on ``claim.id``.
 
-    First occurrence of any given id wins; order of first appearance is
-    preserved. Mirrors ``dedupe_entities`` in the research state module.
+    Order of first appearance is preserved, but the **latest** version of a
+    claim wins. Nodes such as the verifier return updated copies of existing
+    claims (same id, new status); a first-wins merge silently discarded every
+    one of those updates, so no claim could ever leave ``unverified``.
     """
-    combined = (left or []) + (right or [])
-    seen: dict[str, Claim] = {}
-    for claim in combined:
-        if claim.id not in seen:
-            seen[claim.id] = claim
-    return list(seen.values())
+    merged: dict[str, Claim] = {}
+    for claim in (left or []) + (right or []):
+        merged[claim.id] = claim  # dict keeps first-insertion order on overwrite
+    return list(merged.values())

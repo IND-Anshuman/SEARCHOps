@@ -35,6 +35,31 @@ def replace_list(left: list[Any] | None, right: list[Any] | None) -> list[Any]:
     return right
 
 
+def merge_by_url(left: list[dict[str, Any]] | None, right: list[dict[str, Any]] | None) -> list[dict[str, Any]]:
+    """Accumulate page records across research loops, keyed on ``url``.
+
+    A later record for the same URL replaces the earlier one in place (the
+    state pruner blanks page text that way). Replacing the whole list each
+    round lost every source fetched in an earlier loop, so claims from round
+    one cited pages missing from the report's Sources list.
+    """
+    merged: dict[str, dict[str, Any]] = {}
+    for doc in (left or []) + (right or []):
+        if isinstance(doc, dict) and doc.get("url"):
+            merged[str(doc["url"])] = doc
+    return list(merged.values())
+
+
+def merge_passages(left: list[Any] | None, right: list[Any] | None) -> list[Any]:
+    """Accumulate evidence passages across loops, keyed on passage id."""
+    merged: dict[str, Any] = {}
+    for p in (left or []) + (right or []):
+        pid = p.get("id") if isinstance(p, dict) else getattr(p, "id", None)
+        if pid:
+            merged[str(pid)] = p
+    return list(merged.values())
+
+
 def dedupe_entities(left: list[KGEntity] | None, right: list[KGEntity] | None) -> list[KGEntity]:
     """State reducer that merges and deduplicates KGEntity lists by canonical_id."""
     combined = (left or []) + (right or [])
@@ -70,14 +95,39 @@ class ResearchState(TypedDict, total=False):
     correlation_id: str
     plan: ResearchPlan
     budget: ExecutionBudget
+    # Follow-up queries the gap analyst queued for the next search round, and
+    # every query already searched (so a loop never re-issues one).
+    pending_queries: Annotated[list[str], replace_list]
+    searched_queries: Annotated[list[str], operator.add]
+
+    # ── Report configuration (from the request) ───────────────────────────
+    # Declared so LangGraph keeps them: keys missing from the schema are
+    # silently dropped from the input, which made these settings no-ops.
+    report_type: str
+    report_structure_prompt: str
 
     # ── Search & Telemetry ────────────────────────────────────────────────
     search_results: Annotated[list[SearchResultItem], operator.add]
     search_executions: Annotated[list[SearchExecution], operator.add]
-    urls_to_scrape: Annotated[list[str], operator.add]
+    # This round's results only; the ranker ranks these, not the history.
+    round_search_results: Annotated[list[SearchResultItem], replace_list]
+    # `replace_list`, NOT `operator.add`: the ranker runs after search and
+    # emits the authoritative ranked URL set. With `operator.add` the raw
+    # search list (~66 URLs) was concatenated *ahead* of the ranked list, and
+    # scrape_node takes [:max_pages] — so it always scraped the unranked head
+    # and the ranker's output was discarded. replace_list makes the ranker the
+    # last writer, which is what the graph intends.
+    urls_to_scrape: Annotated[list[str], replace_list]
 
     # ── Scraping ──────────────────────────────────────────────────────────
-    scraped_contents: Annotated[list[dict[str, Any]], replace_list]  # [{"url": str, "content": str, "title": str}]
+    # Every page fetched in any loop: [{"url", "title", "content"}]. Content
+    # is blanked after extraction; the text lives on in ``passages``.
+    scraped_contents: Annotated[list[dict[str, Any]], merge_by_url]
+    # Pages fetched this round, with full text, for the extractor.
+    round_documents: Annotated[list[dict[str, Any]], replace_list]
+    # The run's evidence store: every page chunked into passages (see
+    # orchestration/passages.py). Ground truth for citations and verification.
+    passages: Annotated[list[Any], merge_passages]
     failed_urls: Annotated[list[str], operator.add]
     # Free counters from the crawl frontier (pages fetched, links seen, URLs
     # dropped as out of scope). Empty in precision mode, where no frontier runs.
@@ -95,10 +145,23 @@ class ResearchState(TypedDict, total=False):
     evidence_claims: Annotated[list[Claim], dedupe_claims]  # merges & dedupes by claim.id
     evidence_gaps: Annotated[list[EvidenceGap], replace_list]  # replaced wholesale each round
 
+    # ── Evidence quality ─────────────────────────────────────────────────
+    # Computed by the evaluation node from the run's own artefacts: citation
+    # coverage, hallucination rate, and the claim status mix.
+    evaluation_stats: dict[str, Any]
+    # The validated corpus — a bounded sample of the retrieved page text,
+    # captured by the state pruner before it strips the raw blobs. The
+    # evaluation node measures hallucination against this.
+    evidence_corpus: str
+
     # ── Report ────────────────────────────────────────────────────────────
     report_sections: Annotated[list[str], operator.add]
     final_report: str
-    citations: Annotated[list[str], operator.add]
+    target_pages: int
+    report_theme: str
+    citations: Annotated[list[str], replace_list]
+    # Numbered source list the report's [n] markers resolve against.
+    report_sources: list[dict[str, Any]]
 
     # ── Report quality (why the report looks the way it does) ─────────────
     # Populated by report_writer via llm/report_shaper.py so the UI can

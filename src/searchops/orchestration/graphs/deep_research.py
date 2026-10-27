@@ -3,10 +3,11 @@ Deep Research LangGraph Compiled State Graph.
 
 Pipeline (post Wave-2 wiring):
 
-  START → planner → search → ranker → scrape → extract_claims →
-         extract_knowledge → critic → verifier
-                          ──[gaps? & under loop cap]──→ gap_analyst → planner
-                          └─[no gaps | loop cap reached]─→ state_pruner → report_writer → END
+  START → planner → search → ranker → scrape → extract_evidence →
+         critic → verifier
+                          ──[gaps? & under loop cap]──→ gap_analyst ─[new queries]→ planner
+                          │                                         └─[none]→ state_pruner
+                          └─[no gaps | loop cap reached]─→ state_pruner → report_writer → evaluation → END
 
 Reflection loop semantics:
   - ``critic`` grades accumulated evidence; emits ``evidence_gaps``.
@@ -24,7 +25,7 @@ so the graph remains pure and testable.
 from __future__ import annotations
 
 import functools
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
 import structlog
 from langgraph.graph import END, START, StateGraph
@@ -32,20 +33,23 @@ from langgraph.graph import END, START, StateGraph
 from searchops.core.context.research import ResearchDepth
 from searchops.knowledge.extractor import EntityExtractor
 from searchops.llm.router import LLMRouter
-from searchops.orchestration.nodes.critic import critic_node
-from searchops.orchestration.nodes.extract_claims import extract_claims_node
-from searchops.orchestration.nodes.extract_knowledge import extract_knowledge_node
+from searchops.orchestration.nodes.critic import _SYSTEM_CRITIC_PROMPT, critic_node
+from searchops.orchestration.nodes.evaluation import evaluation_node
+from searchops.orchestration.nodes.extract_evidence import _SYSTEM_UNIFIED_EXTRACTION_PROMPT, extract_evidence_node
 from searchops.orchestration.nodes.gap_analyst import gap_analyst_node
-from searchops.orchestration.nodes.planner import planner_node
+from searchops.orchestration.nodes.planner import _PLANNER_PROMPT, planner_node
 from searchops.orchestration.nodes.ranker import ranker_node
 from searchops.orchestration.nodes.report_writer import report_writer_node
 from searchops.orchestration.nodes.scrape import scrape_node
 from searchops.orchestration.nodes.search import search_node
 from searchops.orchestration.nodes.state_pruner import state_pruner_node
-from searchops.orchestration.nodes.verifier import verifier_node
+from searchops.orchestration.nodes.verifier import _SYSTEM_VERIFY_PROMPT, verifier_node
 from searchops.orchestration.states.research_state import ResearchState
-from searchops.scraping.pipeline import ScrapingPipeline
+from searchops.scraping.factory import build_scraping_pipeline
 from searchops.search.orchestrator import SearchOrchestrator
+
+if TYPE_CHECKING:
+    from searchops.scraping.factory import PageFetcher
 
 log = structlog.get_logger(__name__)
 
@@ -68,17 +72,32 @@ _MAX_LOOPS = {
 # Declared here, next to the graph itself, so the two cannot drift.
 # test_topology_contract.py enforces the match.
 GRAPH_TOPOLOGY: list[tuple[str, str, str, str]] = [
-    ("planner", "Planner Agent (Decomposition)", "planner", "system_planner_v4.2.jinja2"),
-    ("search", "Web Searcher (Serper/Tavily)", "search", "system_searcher_v3.1.jinja2"),
-    ("ranker", "Result Ranker", "extract", "system_ranker_v1.0.jinja2"),
-    ("scrape", "Deep Scraper (Firecrawl Engine)", "scrape", "system_scraper_v2.8.jinja2"),
-    ("extract_claims", "Claim Extractor (Typed Evidence)", "extract", "system_claims_v1.0.jinja2"),
-    ("extract_knowledge", "GraphRAG Extractor (Neo4j)", "graph_rag", "system_graphrag_v5.0.jinja2"),
-    ("critic", "Evidence Critic (Reflection)", "verify", "system_critic_v1.0.jinja2"),
-    ("verifier", "Fact Verifier (Grounding)", "verify", "system_verifier_v1.4.jinja2"),
-    ("gap_analyst", "Gap Analyst (Follow-up Queries)", "extract", "system_gap_analyst_v1.0.jinja2"),
-    ("state_pruner", "Context State Pruner", "extract", "system_state_pruner_v1.0.jinja2"),
-    ("report_writer", "Report Synthesis Writer", "report", "system_report_writer_v4.2.jinja2"),
+    ("planner", "Planner (Query Decomposition)", "planner", _PLANNER_PROMPT.strip()),
+    ("search", "Web Search (Federated)", "search", "No LLM call. Searches only queries not run in an earlier round."),
+    ("ranker", "Result Ranker (RRF)", "extract", "No LLM call. Reciprocal rank fusion across sub-query result lists."),
+    ("scrape", "Page Fetcher (Tiered Scraper)", "scrape", "No LLM call. Concurrent fetch of ranked URLs not yet read."),
+    ("extract_evidence", "Evidence Extractor (Grounded Claims)", "extract", _SYSTEM_UNIFIED_EXTRACTION_PROMPT),
+    ("critic", "Coverage Critic (Reflection)", "verify", _SYSTEM_CRITIC_PROMPT),
+    ("verifier", "Source Verifier (Cross-source)", "verify", _SYSTEM_VERIFY_PROMPT),
+    (
+        "gap_analyst",
+        "Gap Analyst (Follow-up Queries)",
+        "extract",
+        "No LLM call. Turns coverage gaps into new search queries.",
+    ),
+    ("state_pruner", "Context State Pruner", "extract", "No LLM call. Captures the passage corpus for evaluation."),
+    (
+        "report_writer",
+        "Report Writer (Cited Synthesis)",
+        "report",
+        "Plans sections, then writes each from its most relevant verified claims.",
+    ),
+    (
+        "evaluation",
+        "Evidence Quality Evaluator",
+        "verify",
+        "No LLM call. Measures grounding, citation coverage and hallucination.",
+    ),
 ]
 
 # Ordered node ids, derived from the metadata above rather than restated.
@@ -104,10 +123,22 @@ def should_continue(state: ResearchState) -> str:
     return "state_pruner"
 
 
+def after_gap_analysis(state: ResearchState) -> str:
+    """Loop only when the gap analyst queued queries that were never searched.
+
+    Without new queries another round would re-run search over nothing and
+    pay for a critic + verifier pass that cannot change the outcome.
+    """
+    if state.get("pending_queries"):
+        return "planner"
+    log.info("No new follow-up queries; proceeding to synthesis")
+    return "state_pruner"
+
+
 def build_deep_research_graph(
     llm_router: LLMRouter | None = None,
     orchestrator: SearchOrchestrator | None = None,
-    scraping_pipeline: ScrapingPipeline | None = None,
+    scraping_pipeline: PageFetcher | None = None,
     extractor: EntityExtractor | None = None,
     aggregator: Any | None = None,
 ) -> Any:
@@ -119,7 +150,7 @@ def build_deep_research_graph(
     """
     _llm = llm_router or LLMRouter()
     _orch = orchestrator or aggregator or SearchOrchestrator()
-    _pipe = scraping_pipeline or ScrapingPipeline()
+    _pipe = scraping_pipeline or build_scraping_pipeline()
     # EntityExtractor only needs an LLM router, so it can always be built from
     # the router the graph already resolved.
     _extractor = extractor or EntityExtractor(_llm)
@@ -131,25 +162,21 @@ def build_deep_research_graph(
     graph.add_node("search", functools.partial(search_node, orchestrator=_orch))
     graph.add_node("ranker", ranker_node)
     graph.add_node("scrape", functools.partial(scrape_node, pipeline=_pipe))
-    graph.add_node("extract_claims", functools.partial(extract_claims_node, llm_router=_llm))
-    graph.add_node(
-        "extract_knowledge",
-        functools.partial(extract_knowledge_node, extractor=_extractor),
-    )
+    graph.add_node("extract_evidence", functools.partial(extract_evidence_node, llm_router=_llm))
     graph.add_node("critic", functools.partial(critic_node, llm_router=_llm))
     graph.add_node("verifier", functools.partial(verifier_node, llm_router=_llm))
     graph.add_node("gap_analyst", gap_analyst_node)
     graph.add_node("state_pruner", state_pruner_node)
     graph.add_node("report_writer", functools.partial(report_writer_node, llm_router=_llm))
+    graph.add_node("evaluation", evaluation_node)
 
     # Wire graph with the 3-arm reflection loop.
     graph.add_edge(START, "planner")
     graph.add_edge("planner", "search")
     graph.add_edge("search", "ranker")
     graph.add_edge("ranker", "scrape")
-    graph.add_edge("scrape", "extract_claims")
-    graph.add_edge("extract_claims", "extract_knowledge")
-    graph.add_edge("extract_knowledge", "critic")
+    graph.add_edge("scrape", "extract_evidence")
+    graph.add_edge("extract_evidence", "critic")
     graph.add_edge("critic", "verifier")
     graph.add_conditional_edges(
         "verifier",
@@ -159,9 +186,14 @@ def build_deep_research_graph(
             "state_pruner": "state_pruner",
         },
     )
-    graph.add_edge("gap_analyst", "planner")
+    graph.add_conditional_edges(
+        "gap_analyst",
+        after_gap_analysis,
+        {"planner": "planner", "state_pruner": "state_pruner"},
+    )
     graph.add_edge("state_pruner", "report_writer")
-    graph.add_edge("report_writer", END)
+    graph.add_edge("report_writer", "evaluation")
+    graph.add_edge("evaluation", END)
 
     # Fail fast at build time if the declared metadata and the actually
     # registered nodes diverge. Without this the API silently drops deltas for
