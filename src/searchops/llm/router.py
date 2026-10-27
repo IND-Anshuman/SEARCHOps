@@ -48,6 +48,10 @@ log = structlog.get_logger(__name__)
 # ── Provider detection helpers ─────────────────────────────────────────────────
 
 
+class _EmptyCompletionError(RuntimeError):
+    """A model call succeeded but returned no content."""
+
+
 def _is_claude(model: str) -> bool:
     return "claude" in model.lower()
 
@@ -87,6 +91,11 @@ class LLMRouter:
         self.settings = cfg.llm
         self.cache = cache
         self._models_cache: dict[tuple[str, float, int | None], Any] = {}
+        # Cumulative usage across every call this router served. The research
+        # service diffs it around each graph node to report real per-node
+        # token use and cost (nodes return strings, not LangChain messages,
+        # so usage cannot be read from the state delta).
+        self.usage: dict[str, float] = {"calls": 0, "prompt_tokens": 0, "completion_tokens": 0, "cost_usd": 0.0}
 
     # ── Provider factory ───────────────────────────────────────────────────
 
@@ -307,6 +316,7 @@ class LLMRouter:
             return any(t in low for t in ("429", "resource_exhausted", "rate limit", "quota"))
 
         now = time.time()
+        only_empty = True
         for active_model in list(unique_models):
             # Skip permanently-dead models; honour a temporary backoff for
             # rate-limited ones so the cascade moves straight to a live model.
@@ -325,6 +335,14 @@ class LLMRouter:
 
                 response = await chat_model.ainvoke(messages)
                 response_text = str(response.content)
+                if not response_text.strip():
+                    # Reasoning models can spend the whole token budget
+                    # thinking and return no content. Retry once, then fall
+                    # through the cascade instead of handing callers "".
+                    response = await chat_model.ainvoke(messages)
+                    response_text = str(response.content)
+                if not response_text.strip():
+                    raise _EmptyCompletionError(f"{active_model} returned an empty completion")
 
                 # Extract token usage from metadata if present and valid dict, otherwise count
                 meta = getattr(response, "response_metadata", None)
@@ -362,6 +380,12 @@ class LLMRouter:
                     completion_tokens
                 )
                 LLM_COST_USD_TOTAL.labels(provider=active_provider, model=active_model).inc(cost)
+                usage = getattr(self, "usage", None)
+                if isinstance(usage, dict):
+                    usage["calls"] = usage.get("calls", 0) + 1
+                    usage["prompt_tokens"] = usage.get("prompt_tokens", 0) + prompt_tokens
+                    usage["completion_tokens"] = usage.get("completion_tokens", 0) + completion_tokens
+                    usage["cost_usd"] = usage.get("cost_usd", 0.0) + float(cost or 0.0)
 
                 # Store in cache
                 if self.cache and temperature == 0.0:
@@ -371,6 +395,10 @@ class LLMRouter:
 
             except Exception as exc:
                 last_exception = exc
+                if isinstance(exc, _EmptyCompletionError):
+                    log.warning("LLM returned empty completion; trying fallback cascade", model=active_model)
+                    continue
+                only_empty = False
                 LLM_REQUESTS_TOTAL.labels(provider=active_provider, model=active_model, status="error").inc()
                 err_text = str(exc)
                 if _is_permanent(err_text):
@@ -403,6 +431,11 @@ class LLMRouter:
                     error=err_text,
                 )
 
+        if only_empty and isinstance(last_exception, _EmptyCompletionError):
+            # Every model answered, but with nothing. Callers treat "" as "no
+            # output" and degrade honestly; that is the existing contract.
+            log.error("All models returned empty completions", models=unique_models)
+            return ""
         log.error(
             "All fallback models failed in LLM router cascade",
             models=unique_models,
