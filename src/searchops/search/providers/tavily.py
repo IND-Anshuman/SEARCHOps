@@ -19,6 +19,10 @@ log = structlog.get_logger(__name__)
 class TavilySearchProvider(ISearchProvider):
     """Tavily Search API implementation."""
 
+    # The primary paid provider: tried before the other keyed ones (default 100)
+    # once the key-free tools are out of the way (TOOL_PROFILE=api).
+    priority = 60
+
     def __init__(self, settings: Settings | None = None) -> None:
         cfg = settings or get_settings()
         self.settings = cfg.search
@@ -30,8 +34,14 @@ class TavilySearchProvider(ISearchProvider):
 
     @property
     def capabilities(self) -> set[SearchCapability]:
+        # KEYWORD is declared because the research pipeline searches with the
+        # DEEP profile, which requires SEMANTIC + KEYWORD + METADATA. Tavily
+        # answers plain keyword queries; without this it matched no profile the
+        # pipeline uses, was never routed to, and only the key-free tools
+        # (SearXNG, the browser) ever ran.
         return {
             SearchCapability.SEMANTIC,
+            SearchCapability.KEYWORD,
             SearchCapability.NEWS,
             SearchCapability.METADATA,
             SearchCapability.MARKDOWN,

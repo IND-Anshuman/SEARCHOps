@@ -48,17 +48,34 @@ class ToolRegistry:
 
     def __init__(self) -> None:
         self._tools: dict[str, ToolDefinition] = {}
+        self._handlers: dict[str, Any] = {}
         self._lock = asyncio.Lock()
 
-    async def register(self, tool: ToolDefinition) -> None:
-        """Register a tool definition."""
+    async def register(self, tool: ToolDefinition, handler: Any = None) -> None:
+        """Register a tool definition, optionally with its executable handler.
+
+        ``handler`` is the async callable that performs the work. A definition
+        without a handler is metadata only — it can be listed and described,
+        but it cannot be executed, and the client must say so rather than
+        report a fabricated success.
+        """
         async with self._lock:
             self._tools[tool.name] = tool
-            log.debug("Tool registered", tool_name=tool.name, version=tool.version)
+            if handler is not None:
+                self._handlers[tool.name] = handler
+            log.debug("Tool registered", tool_name=tool.name, version=tool.version, executable=handler is not None)
 
     async def get(self, name: str) -> ToolDefinition | None:
         """Get a tool definition by name."""
         return self._tools.get(name)
+
+    def get_handler(self, name: str) -> Any | None:
+        """Get the executable handler bound to a tool, if any.
+
+        Not async: the handler map is written only under the registry lock at
+        registration time and read on the hot path.
+        """
+        return self._handlers.get(name)
 
     async def get_all(self, *, enabled_only: bool = True) -> list[ToolDefinition]:
         """Return all registered tool definitions."""

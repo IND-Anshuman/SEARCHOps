@@ -97,13 +97,14 @@ class PlaywrightSearchProvider(ISearchProvider):
 
     @property
     def capabilities(self) -> set[SearchCapability]:
-        # Declares SEMANTIC so this provider is eligible for the DEEP profile
-        # (semantic + keyword + metadata). A browser SERP does return ranked
-        # results; claiming only keyword/metadata made the free fallback
-        # unreachable for deep queries.
+        # No SEMANTIC: a browser SERP scraper does not perform semantic
+        # retrieval. Declaring it made this provider eligible for the DEEP
+        # profile, which expects ranked semantically-relevant results — the
+        # scraper instead returns page chrome (navigation links, help pages)
+        # that outrank the real provider. Keyword-only keeps it as a
+        # high-quality fallback for keyword profiles.
         return {
             SearchCapability.KEYWORD,
-            SearchCapability.SEMANTIC,
             SearchCapability.JAVASCRIPT,
             SearchCapability.METADATA,
         }

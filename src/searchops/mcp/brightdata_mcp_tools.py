@@ -228,6 +228,77 @@ BRIGHTDATA_MCP_TOOLS = {
     "brightdata_dataset_fetch": brightdata_dataset_fetch,
 }
 
+
+# JSON schemas describing each tool's arguments, so the registry can list a
+# tool's contract rather than just its name.
+_BRIGHTDATA_TOOL_SCHEMAS: dict[str, dict[str, Any]] = {
+    "brightdata_serp_search": {
+        "description": "Search Google via the Bright Data SERP API.",
+        "input_schema": {
+            "type": "object",
+            "properties": {
+                "query": {"type": "string", "description": "Search query string."},
+                "country": {"type": "string", "description": "2-letter ISO country code.", "default": "us"},
+                "num_results": {"type": "integer", "description": "Organic results to return (max 20).", "default": 10},
+            },
+            "required": ["query"],
+        },
+    },
+    "brightdata_unlocker_scrape": {
+        "description": "Scrape a CAPTCHA-protected or bot-blocked URL via Bright Data Web Unlocker.",
+        "input_schema": {
+            "type": "object",
+            "properties": {
+                "url": {"type": "string", "description": "The URL to scrape."},
+                "extract_markdown": {"type": "boolean", "default": True},
+                "wait_for_selector": {"type": "string", "description": "Optional CSS selector to wait for."},
+            },
+            "required": ["url"],
+        },
+    },
+    "brightdata_dataset_fetch": {
+        "description": "Fetch pre-parsed structured data (GitHub/LinkedIn/Reddit) via Bright Data.",
+        "input_schema": {
+            "type": "object",
+            "properties": {
+                "target_type": {"type": "string", "description": "github | linkedin | reddit"},
+                "url": {"type": "string", "description": "The URL to fetch."},
+            },
+            "required": ["target_type", "url"],
+        },
+    },
+}
+
+
+async def register_brightdata_tools(registry: Any) -> int:
+    """Register the Bright Data tools with *registry*, handlers bound.
+
+    Each tool is registered with its real async function as the handler, so
+    ``MCPClient.call_tool`` actually performs the work instead of reporting a
+    fabricated success. A tool whose credentials are not configured is still
+    registered — the tool itself reports the configuration error, which is
+    more useful than the tool being invisible.
+
+    Returns the number of tools registered.
+    """
+    from searchops.platform.registry.tool_registry import ToolDefinition
+
+    for name, handler in BRIGHTDATA_MCP_TOOLS.items():
+        meta = _BRIGHTDATA_TOOL_SCHEMAS.get(name, {})
+        await registry.register(
+            ToolDefinition(
+                name=f"brightdata:{name}",
+                description=meta.get("description", name),
+                input_schema=meta.get("input_schema", {}),
+                output_schema={},
+                tags=["brightdata", "mcp"],
+            ),
+            handler=handler,
+        )
+    log.info("Registered Bright Data MCP tools", count=len(BRIGHTDATA_MCP_TOOLS))
+    return len(BRIGHTDATA_MCP_TOOLS)
+
+
 __all__ = [
     "BRIGHTDATA_MCP_TOOLS",
     "brightdata_dataset_fetch",

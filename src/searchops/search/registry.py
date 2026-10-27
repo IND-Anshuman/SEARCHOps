@@ -125,7 +125,9 @@ class SearchProviderRegistry:
                             # provider is explicit about it rather than silently
                             # inheriting 100 from a getattr default.
                             prio = getattr(type(provider_instance), "priority", DEFAULT_PRIORITY)
-                            self.register(provider_instance, priority=prio, enabled=True)
+                            self.register(
+                                provider_instance, priority=prio, enabled=_allowed_by_profile(provider_instance)
+                            )
                         except Exception as e:
                             log.error(
                                 "Failed to instantiate discovered search provider class",
@@ -140,5 +142,19 @@ class SearchProviderRegistry:
                 )
 
 
-# Global singleton registry instance
+def _allowed_by_profile(provider: ISearchProvider) -> bool:
+    """Key-free providers (SearXNG, the headless browser) run only with ``TOOL_PROFILE=local``.
+
+    In the API profile they are registered but disabled: they would otherwise
+    be tried before Tavily (SearXNG has the higher priority) and be the
+    fallback when a keyed provider returns nothing, and the slim image has
+    neither a SearXNG instance nor a browser.
+    """
+    from searchops.config.settings import get_settings
+
+    return provider.requires_credentials or get_settings().scraping.tool_profile == "local"
+
+
+# Global singleton registry instance. It discovers providers as this module is
+# imported, so everything discovery calls must be defined above this line.
 registry = SearchProviderRegistry(auto_discover=True)
