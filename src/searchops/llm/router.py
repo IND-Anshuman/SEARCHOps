@@ -22,12 +22,13 @@ from __future__ import annotations
 
 import re
 import time
-from typing import TYPE_CHECKING, Any
+from typing import TYPE_CHECKING, Any, TypeVar, cast
 
 import structlog
 from langchain_anthropic import ChatAnthropic
 from langchain_core.messages import BaseMessage, HumanMessage, SystemMessage
 from langchain_openai import ChatOpenAI
+from pydantic import BaseModel
 
 from searchops.config.settings import Settings, get_settings
 from searchops.core.context.execution import ExecutionContext
@@ -44,6 +45,8 @@ if TYPE_CHECKING:
     from searchops.llm.cache import LLMResponseCache
 
 log = structlog.get_logger(__name__)
+
+_SchemaT = TypeVar("_SchemaT", bound=BaseModel)
 
 # ── Provider detection helpers ─────────────────────────────────────────────────
 
@@ -232,6 +235,28 @@ class LLMRouter:
         }
         return mapping.get(s.default_provider, s.nvidia_default_model or "glm-4-flash")
 
+    def _candidate_models(self, model_name: str) -> list[str]:
+        """Ordered fallback cascade: the requested model, then each provider
+        whose API key is actually configured, de-duplicated preserving order."""
+        s = self.settings
+        candidate_list = [model_name]
+        if s.openai_api_key and "CHANGE_ME" not in s.openai_api_key.get_secret_value():
+            candidate_list.append(s.openai_default_model)
+        if s.anthropic_api_key and "CHANGE_ME" not in s.anthropic_api_key.get_secret_value():
+            candidate_list.append(s.anthropic_default_model)
+        if s.google_api_key and "CHANGE_ME" not in s.google_api_key.get_secret_value():
+            candidate_list.append(s.google_default_model)
+        if s.nvidia_api_key and "CHANGE_ME" not in s.nvidia_api_key.get_secret_value():
+            candidate_list.append(s.nvidia_default_model)
+        if s.zhipu_api_key and "CHANGE_ME" not in s.zhipu_api_key.get_secret_value():
+            candidate_list.append(s.zhipu_default_model)
+        # Remove duplicates while preserving order
+        unique_models: list[str] = []
+        for m in candidate_list:
+            if m not in unique_models:
+                unique_models.append(m)
+        return unique_models
+
     # ── Public API ─────────────────────────────────────────────────────────
 
     async def generate(
@@ -265,24 +290,7 @@ class LLMRouter:
             log.debug("Prompt safe-truncated to char limit", limit=max_chars)
 
         # Build dynamic fallback candidates based on actually configured API keys
-        s = self.settings
-        candidate_list = [model_name]
-
-        if s.openai_api_key and "CHANGE_ME" not in s.openai_api_key.get_secret_value():
-            candidate_list.append(s.openai_default_model)
-        if s.anthropic_api_key and "CHANGE_ME" not in s.anthropic_api_key.get_secret_value():
-            candidate_list.append(s.anthropic_default_model)
-        if s.google_api_key and "CHANGE_ME" not in s.google_api_key.get_secret_value():
-            candidate_list.append(s.google_default_model)
-        if s.nvidia_api_key and "CHANGE_ME" not in s.nvidia_api_key.get_secret_value():
-            candidate_list.append(s.nvidia_default_model)
-        if s.zhipu_api_key and "CHANGE_ME" not in s.zhipu_api_key.get_secret_value():
-            candidate_list.append(s.zhipu_default_model)
-        # Remove duplicates while preserving order
-        unique_models: list[str] = []
-        for m in candidate_list:
-            if m not in unique_models:
-                unique_models.append(m)
+        unique_models = self._candidate_models(model_name)
 
         last_exception: Exception | None = None
         # A model that fails with a permanent error (410 Gone, unknown model,
@@ -442,3 +450,158 @@ class LLMRouter:
             error=str(last_exception),
         )
         raise LLMError(service=f"LLM:{provider}", cause=last_exception) from last_exception
+
+    async def generate_structured(
+        self,
+        prompt: str,
+        schema: type[_SchemaT],
+        *,
+        system_prompt: str | None = None,
+        model: str | None = None,
+        temperature: float = 0.0,
+        max_tokens: int | None = None,
+        context: ExecutionContext | None = None,
+    ) -> _SchemaT | None:
+        """Return a provider-validated instance of ``schema`` — no JSON repair.
+
+        Uses LangChain's native ``.with_structured_output(schema)``, so the
+        provider constrains generation to the schema at the API level and the
+        caller never parses free-form text or runs the repair ladder. Mirrors
+        :meth:`generate` for caching, the fallback cascade, budget enforcement
+        and metrics.
+
+        Returns ``None`` (never raises) when no configured model can produce a
+        valid instance, so callers can degrade to the free-form path instead of
+        failing the whole run.
+        """
+        model_name = model or self._resolve_default_model()
+        exec_ctx = context or ExecutionContext.create()
+
+        schema_name = getattr(schema, "__name__", "schema")
+        cache_prompt_key = f"[structured:{schema_name}]{system_prompt or ''}||{prompt}"
+
+        # 1. Cache check (deterministic requests only). Structured results are
+        #    cached as their JSON dump and re-validated on read.
+        if self.cache and temperature == 0.0:
+            cached = await self.cache.get(model_name, cache_prompt_key, temperature)
+            if cached is not None:
+                try:
+                    return schema.model_validate_json(cached)
+                except Exception:  # pragma: no cover - stale/incompatible cache entry
+                    log.debug("Structured cache entry failed re-validation; ignoring", schema=schema_name)
+
+        # 2. Max prompt length safety cap (word-boundary truncated)
+        max_chars = getattr(self.settings, "max_prompt_chars", 12_000)
+        if len(prompt) > max_chars:
+            prompt = prompt[:max_chars].rsplit(" ", 1)[0]
+
+        unique_models = self._candidate_models(model_name)
+        self._dead_models = getattr(self, "_dead_models", set())
+        self._dead_until = getattr(self, "_dead_until", {})
+
+        last_exception: Exception | None = None
+        now = time.time()
+        for active_model in list(unique_models):
+            if active_model in self._dead_models:
+                continue
+            if self._dead_until.get(active_model, 0.0) > now:
+                continue
+            active_provider = self._resolve_provider_label(active_model)
+            try:
+                chat_model = self._get_model(active_model, temperature, max_tokens)
+                structured_model = chat_model.with_structured_output(schema, include_raw=True)
+
+                messages: list[BaseMessage] = []
+                if system_prompt:
+                    messages.append(SystemMessage(content=system_prompt))
+                messages.append(HumanMessage(content=prompt))
+
+                result = await structured_model.ainvoke(messages)
+
+                # include_raw=True yields {"raw": AIMessage, "parsed": obj, "parsing_error": ...}
+                parsed_obj: Any = None
+                raw_message: Any = None
+                if isinstance(result, dict):
+                    parsed_obj = result.get("parsed")
+                    raw_message = result.get("raw")
+                    if result.get("parsing_error"):
+                        raise _EmptyCompletionError(f"{active_model} structured parse error")
+                else:  # some providers return the parsed object directly
+                    parsed_obj = result
+
+                if parsed_obj is None:
+                    raise _EmptyCompletionError(f"{active_model} returned no structured output")
+                if not isinstance(parsed_obj, schema):
+                    parsed_obj = schema.model_validate(parsed_obj)
+
+                # Token accounting from the raw message when present, else estimate.
+                prompt_tokens: int | None = None
+                completion_tokens: int | None = None
+                meta = getattr(raw_message, "response_metadata", None)
+                if isinstance(meta, dict):
+                    usage = meta.get("token_usage") or meta.get("usage")
+                    if isinstance(usage, dict):
+                        p_tok = usage.get("prompt_tokens") or usage.get("input_tokens")
+                        c_tok = usage.get("completion_tokens") or usage.get("output_tokens")
+                        if isinstance(p_tok, int):
+                            prompt_tokens = p_tok
+                        if isinstance(c_tok, int):
+                            completion_tokens = c_tok
+                completion_text = parsed_obj.model_dump_json()
+                if prompt_tokens is None:
+                    prompt_tokens = int(count_tokens(prompt, active_model))
+                if completion_tokens is None:
+                    completion_tokens = int(count_tokens(completion_text, active_model))
+
+                cost = LLMBudgetTracker.record_and_check(
+                    context=exec_ctx,
+                    model_name=active_model,
+                    prompt_tokens=prompt_tokens,
+                    completion_tokens=completion_tokens,
+                )
+
+                LLM_REQUESTS_TOTAL.labels(provider=active_provider, model=active_model, status="success").inc()
+                LLM_TOKENS_TOTAL.labels(provider=active_provider, model=active_model, token_type="prompt").inc(
+                    prompt_tokens
+                )
+                LLM_TOKENS_TOTAL.labels(provider=active_provider, model=active_model, token_type="completion").inc(
+                    completion_tokens
+                )
+                LLM_COST_USD_TOTAL.labels(provider=active_provider, model=active_model).inc(cost)
+                usage_acc = getattr(self, "usage", None)
+                if isinstance(usage_acc, dict):
+                    usage_acc["calls"] = usage_acc.get("calls", 0) + 1
+                    usage_acc["prompt_tokens"] = usage_acc.get("prompt_tokens", 0) + prompt_tokens
+                    usage_acc["completion_tokens"] = usage_acc.get("completion_tokens", 0) + completion_tokens
+                    usage_acc["cost_usd"] = usage_acc.get("cost_usd", 0.0) + float(cost or 0.0)
+
+                if self.cache and temperature == 0.0:
+                    await self.cache.set(active_model, cache_prompt_key, temperature, completion_text)
+
+                return cast("_SchemaT", parsed_obj)
+
+            except Exception as exc:
+                last_exception = exc
+                if isinstance(exc, _EmptyCompletionError):
+                    log.warning("Structured output empty/invalid; trying fallback", model=active_model)
+                    continue
+                LLM_REQUESTS_TOTAL.labels(provider=active_provider, model=active_model, status="error").inc()
+                err_text = str(exc)
+                low = err_text.lower()
+                if any(t in low for t in ("429", "resource_exhausted", "rate limit", "quota")):
+                    self._dead_until[active_model] = time.time() + 300.0
+                log.warning(
+                    "Structured LLM call failed, trying fallback cascade",
+                    model=active_model,
+                    provider=active_provider,
+                    error=err_text,
+                )
+
+        # No model produced a valid instance. Return None so the caller can fall
+        # back to free-form generation + repair rather than failing the run.
+        log.warning(
+            "Structured output unavailable from all candidates; caller should degrade",
+            schema=schema_name,
+            error=str(last_exception) if last_exception else None,
+        )
+        return None

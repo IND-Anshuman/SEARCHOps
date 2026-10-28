@@ -150,49 +150,75 @@ async def _extract_from_doc(
 
     labels = {f"P{i}": p for i, p in enumerate(chosen, 1)}
     body = "\n\n".join(f"[{label}]\n{p.text}" for label, p in labels.items())
-    raw = await llm_router.generate(
-        prompt=f"RESEARCH QUESTION: {question}\n\nPage: {title or url}\n\nPASSAGES:\n\n{body}",
-        system_prompt=_SYSTEM_UNIFIED_EXTRACTION_PROMPT,
-        temperature=0.0,
-    )
+    extraction_prompt = f"RESEARCH QUESTION: {question}\n\nPage: {title or url}\n\nPASSAGES:\n\n{body}"
 
-    outcome = repair_json(raw, record_key="claims", field_keys=("text", "quote", "passage"))
     domain = _domain_of(url)
     memory = get_repair_memory()
 
-    if outcome.parsed is None:
-        memory.record(domain, TIER_SPAN_SALVAGE, recovered=False)
-        EXTRACT_CLAIMS_TOTAL.labels(node="extract_evidence", status="error").inc()
-        NODE_INVOCATIONS_TOTAL.labels(node="extract_evidence", outcome="error").inc()
-        log.error(
-            "evidence extraction unrecoverable",
-            url=url,
-            tier=outcome.tier_name,
-            raw_head=raw[:200],
+    # Prefer native structured output: the provider constrains generation to the
+    # schema, so there is no free-form text to parse and no repair ladder to run.
+    # Routers without the capability (and the test stubs) fall through to the
+    # repair-based path below, which is unchanged.
+    parsed: UnifiedExtractionResult | None = None
+    if hasattr(llm_router, "generate_structured"):
+        try:
+            structured = await llm_router.generate_structured(
+                prompt=extraction_prompt,
+                schema=UnifiedExtractionResult,
+                system_prompt=_SYSTEM_UNIFIED_EXTRACTION_PROMPT,
+                temperature=0.0,
+            )
+        except Exception as exc:  # pragma: no cover - defensive; cascade to text path
+            log.debug("structured extraction failed; falling back to repair path", url=url, error=str(exc))
+            structured = None
+        if isinstance(structured, UnifiedExtractionResult):
+            parsed = structured
+            # A clean, schema-valid parse — record it like an exact JSON parse so
+            # per-domain repair learning still sees the success.
+            memory.record(domain, TIER_EXACT, recovered=True)
+
+    if parsed is None:
+        raw = await llm_router.generate(
+            prompt=extraction_prompt,
+            system_prompt=_SYSTEM_UNIFIED_EXTRACTION_PROMPT,
+            temperature=0.0,
         )
-        return [], [], []
 
-    memory.record(domain, outcome.repair_tier, recovered=True)
+        outcome = repair_json(raw, record_key="claims", field_keys=("text", "quote", "passage"))
 
-    try:
-        parsed = UnifiedExtractionResult.model_validate(outcome.parsed)
-    except Exception as exc:
-        # Salvaged records can miss required fields
-        log.warning(
-            "salvaged evidence failed schema validation",
-            url=url,
-            tier=outcome.tier_name,
-            salvaged=outcome.salvaged,
-            error=str(exc),
-        )
-        memory.record(domain, TIER_SPAN_SALVAGE, recovered=False)
-        EXTRACT_CLAIMS_TOTAL.labels(node="extract_evidence", status="error").inc()
-        return [], [], []
+        if outcome.parsed is None:
+            memory.record(domain, TIER_SPAN_SALVAGE, recovered=False)
+            EXTRACT_CLAIMS_TOTAL.labels(node="extract_evidence", status="error").inc()
+            NODE_INVOCATIONS_TOTAL.labels(node="extract_evidence", outcome="error").inc()
+            log.error(
+                "evidence extraction unrecoverable",
+                url=url,
+                tier=outcome.tier_name,
+                raw_head=raw[:200],
+            )
+            return [], [], []
 
-    if outcome.salvaged:
-        NODE_INVOCATIONS_TOTAL.labels(node="extract_evidence", outcome="salvaged").inc()
-    elif outcome.repair_tier > TIER_EXACT:
-        NODE_INVOCATIONS_TOTAL.labels(node="extract_evidence", outcome="repaired").inc()
+        memory.record(domain, outcome.repair_tier, recovered=True)
+
+        try:
+            parsed = UnifiedExtractionResult.model_validate(outcome.parsed)
+        except Exception as exc:
+            # Salvaged records can miss required fields
+            log.warning(
+                "salvaged evidence failed schema validation",
+                url=url,
+                tier=outcome.tier_name,
+                salvaged=outcome.salvaged,
+                error=str(exc),
+            )
+            memory.record(domain, TIER_SPAN_SALVAGE, recovered=False)
+            EXTRACT_CLAIMS_TOTAL.labels(node="extract_evidence", status="error").inc()
+            return [], [], []
+
+        if outcome.salvaged:
+            NODE_INVOCATIONS_TOTAL.labels(node="extract_evidence", outcome="salvaged").inc()
+        elif outcome.repair_tier > TIER_EXACT:
+            NODE_INVOCATIONS_TOTAL.labels(node="extract_evidence", outcome="repaired").inc()
 
     # Map claims, grounding each quote in the page text.
     claims: list[Claim] = []
