@@ -23,6 +23,7 @@ import structlog
 from searchops.core.interfaces.scraper import ScrapeRequest
 from searchops.knowledge.evaluation.relevance import filter_by_relevance
 from searchops.orchestration.passages import MAX_PAGE_CHARS
+from searchops.scraping.deduplicator import build_deduplicator
 from searchops.scraping.frontier import CrawlConfig, CrawlFrontier
 from searchops.scraping.page_title import infer_title
 
@@ -33,6 +34,8 @@ if TYPE_CHECKING:
 log = structlog.get_logger(__name__)
 
 _MAX_URLS = 3  # free tier: cap total URLs per run
+_DEDUP_THRESHOLD = 0.85  # Jaccard: near-duplicate pages above this are dropped
+_MIN_DEDUP_CHARS = 200  # too little text to fingerprint reliably — never dedup it
 
 
 class _InMemorySeen:
@@ -79,6 +82,38 @@ async def scrape_node(
     scraped: list[dict[str, Any]] = []
     failed: list[str] = []
     concurrency = min(max(max_pages // 2, 4), 10)
+
+    # Near-duplicate guard: syndicated articles and mirror pages return
+    # near-identical text under different URLs. Dropping them here — before any
+    # page reaches ``extract_evidence_node`` — saves 2-4 redundant LLM
+    # extraction calls per run. Best-effort: if datasketch is unavailable the
+    # deduplicator is simply off and every page is kept.
+    try:
+        deduplicator: Any = build_deduplicator(threshold=_DEDUP_THRESHOLD)
+    except Exception as exc:  # pragma: no cover - optional dependency
+        log.warning("Scrape dedup unavailable; keeping all pages", error=str(exc))
+        deduplicator = None
+    duplicates_dropped = 0
+
+    def _is_near_duplicate(url: str, text: str) -> bool:
+        """True (and index the page) when *text* near-duplicates an earlier page.
+
+        Runs synchronously between awaits, so the shared deduplicator needs no
+        lock: index + query is atomic within the event loop.
+        """
+        nonlocal duplicates_dropped
+        if deduplicator is None or len(text) < _MIN_DEDUP_CHARS:
+            return False
+        try:
+            is_dup, matched = deduplicator.is_duplicate(text, threshold=_DEDUP_THRESHOLD)
+            if is_dup:
+                duplicates_dropped += 1
+                log.info("Scrape: dropped near-duplicate page", url=url, matched=matched[:5])
+                return True
+            deduplicator.index_document(url, text)
+        except Exception as exc:  # pragma: no cover - dedup must never fail a scrape
+            log.warning("Scrape dedup check failed; keeping page", url=url, error=str(exc))
+        return False
 
     async def _fetch(page_url: str) -> dict[str, Any] | None:
         try:
@@ -131,6 +166,10 @@ async def scrape_node(
                 progress.set()
             if outcome is None:
                 failed.append(page.url)
+            elif _is_near_duplicate(page.url, outcome.get("content") or ""):
+                # Near-duplicate of a page already kept this run — drop it so
+                # the extractor never pays to read the same text twice.
+                continue
             else:
                 scraped.append(outcome)
 
@@ -148,12 +187,13 @@ async def scrape_node(
         "Scrape complete",
         scraped=len(scraped),
         failed=len(failed),
+        duplicates_dropped=duplicates_dropped,
         **frontier.stats_dict(),
     )
     return {
         "scraped_contents": [{**d, "content": ""} for d in scraped],
         "round_documents": scraped,
         "failed_urls": failed,
-        "frontier_stats": frontier.stats_dict(),
+        "frontier_stats": {**frontier.stats_dict(), "duplicates_dropped": duplicates_dropped},
         "relevance_stats": relevance,
     }
