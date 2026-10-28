@@ -205,6 +205,47 @@ class TestCorpusModeCrawls:
         assert stats["links_seen"] >= 1
 
 
+class TestNearDuplicateDropping:
+    """Near-duplicate pages are dropped before extraction ever sees them."""
+
+    # Long enough to clear the node's _MIN_DEDUP_CHARS fingerprint floor.
+    _LONG = (
+        "Retrieval augmented generation couples a vector store with a language model so answers "
+        "are grounded in retrieved passages rather than parametric memory alone. The retriever "
+        "embeds the query, finds nearest-neighbour chunks, and the model conditions on them. "
+    ) * 2
+
+    @pytest.mark.asyncio
+    async def test_identical_pages_are_deduplicated(self) -> None:
+        pipeline = _RecordingPipeline(
+            bodies={"https://a.com/1": self._LONG, "https://mirror.com/1": self._LONG}
+        )
+        state = _precision_state(["https://a.com/1", "https://mirror.com/1"])
+
+        result = await scrape_node(state, pipeline=pipeline)  # type: ignore[arg-type]
+
+        # Both were fetched, but the mirror carries identical text, so only one
+        # survives into the documents the extractor will read.
+        assert len(pipeline.fetched) == 2
+        assert len(result["round_documents"]) == 1
+        assert result["frontier_stats"]["duplicates_dropped"] == 1
+
+    @pytest.mark.asyncio
+    async def test_distinct_pages_are_all_kept(self) -> None:
+        pipeline = _RecordingPipeline(
+            bodies={
+                "https://a.com/1": self._LONG + " Vector indexes use HNSW graphs.",
+                "https://b.com/1": "An entirely unrelated essay about the history of cartography in Europe. " * 4,
+            }
+        )
+        state = _precision_state(["https://a.com/1", "https://b.com/1"])
+
+        result = await scrape_node(state, pipeline=pipeline)  # type: ignore[arg-type]
+
+        assert len(result["round_documents"]) == 2
+        assert result["frontier_stats"]["duplicates_dropped"] == 0
+
+
 class TestRelevanceFilterWiring:
     """Stage 4 runs in corpus mode only, and never in precision mode."""
 
