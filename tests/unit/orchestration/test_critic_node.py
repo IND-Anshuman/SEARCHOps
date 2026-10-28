@@ -82,3 +82,33 @@ async def test_critic_classifications_are_ignored():
     router = StubLLMRouter('{"gaps":[],"classifications":{"c1":"supported"}}')
     out = await critic_node({"query": "q", "evidence_claims": [Claim(id="c1", text="x")]}, llm_router=router)
     assert "evidence_claims" not in out
+
+
+_CONFIRMED_WITH_STRAY_GAP = (
+    '{"status":"CONFIRMED","gaps":[{"description":"a minor remaining detail","target_query":"x","priority":2}]}'
+)
+
+
+@pytest.mark.unit
+@pytest.mark.asyncio
+async def test_critic_confirmed_sentinel_closes_loop_with_enough_claims():
+    # 8+ grounded claims plus a CONFIRMED verdict → the loop exits now, even
+    # though the model volunteered a low-priority gap.
+    claims = [Claim(id=f"c{i}", text=f"fact number {i}") for i in range(8)]
+    out = await critic_node(
+        {"query": "q", "evidence_claims": claims},
+        llm_router=StubLLMRouter(_CONFIRMED_WITH_STRAY_GAP),
+    )
+    assert out["evidence_gaps"] == []
+
+
+@pytest.mark.unit
+@pytest.mark.asyncio
+async def test_critic_confirmed_ignored_when_evidence_thin():
+    # Too few claims to trust a CONFIRMED verdict: the stray gap is honoured,
+    # so the loop can still gather more evidence.
+    out = await critic_node(
+        {"query": "q", "evidence_claims": [Claim(id="c1", text="only fact")]},
+        llm_router=StubLLMRouter(_CONFIRMED_WITH_STRAY_GAP),
+    )
+    assert len(out["evidence_gaps"]) == 1
