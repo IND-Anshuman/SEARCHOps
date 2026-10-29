@@ -22,7 +22,7 @@ from __future__ import annotations
 
 import re
 import time
-from typing import TYPE_CHECKING, Any, TypeVar
+from typing import TYPE_CHECKING, Any, TypeVar, cast
 
 import structlog
 from langchain_anthropic import ChatAnthropic
@@ -290,7 +290,6 @@ class LLMRouter:
             log.debug("Prompt safe-truncated to char limit", limit=max_chars)
 
         # Build dynamic fallback candidates based on actually configured API keys
-        s = self.settings
         unique_models = self._candidate_models(model_name)
 
         last_exception: Exception | None = None
@@ -579,7 +578,7 @@ class LLMRouter:
                 if self.cache and temperature == 0.0:
                     await self.cache.set(active_model, cache_prompt_key, temperature, completion_text)
 
-                return parsed_obj
+                return cast("_SchemaT", parsed_obj)
 
             except Exception as exc:
                 last_exception = exc
