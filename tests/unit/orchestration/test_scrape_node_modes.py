@@ -217,7 +217,9 @@ class TestNearDuplicateDropping:
 
     @pytest.mark.asyncio
     async def test_identical_pages_are_deduplicated(self) -> None:
-        pipeline = _RecordingPipeline(bodies={"https://a.com/1": self._LONG, "https://mirror.com/1": self._LONG})
+        pipeline = _RecordingPipeline(
+            bodies={"https://a.com/1": self._LONG, "https://mirror.com/1": self._LONG}
+        )
         state = _precision_state(["https://a.com/1", "https://mirror.com/1"])
 
         result = await scrape_node(state, pipeline=pipeline)  # type: ignore[arg-type]
