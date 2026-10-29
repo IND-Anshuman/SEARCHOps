@@ -1,7 +1,7 @@
 """
 Unit tests for the rewired deep-research graph control flow:
 
-  1. should_continue 3-arm routing (gap_analyst / state_pruner / loop cap)
+  1. should_continue 3-arm routing (gap_analyst / verifier / loop cap)
   2. gap_analyst_node pure-function (gap → sub-query, de-dup, loop_count++)
 """
 
@@ -28,7 +28,8 @@ def test_should_continue_no_gaps_goes_to_synthesis():
         "loop_count": 0,
         "depth": ResearchDepth.STANDARD,
     }
-    assert should_continue(state) == "state_pruner"
+    # Verifier is the single terminal pass before synthesis.
+    assert should_continue(state) == "verifier"
 
 
 @pytest.mark.unit
@@ -52,7 +53,7 @@ def test_should_continue_loop_cap_terminates():
         "loop_count": 4,
         "depth": ResearchDepth.DEEP,
     }  # DEEP cap is 4
-    assert should_continue(state) == "state_pruner"
+    assert should_continue(state) == "verifier"
 
 
 @pytest.mark.unit

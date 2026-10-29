@@ -109,6 +109,10 @@ class ResearchState(TypedDict, total=False):
     # ── Search & Telemetry ────────────────────────────────────────────────
     search_results: Annotated[list[SearchResultItem], operator.add]
     search_executions: Annotated[list[SearchExecution], operator.add]
+    # Raw-query results the planner prefetched concurrently with decomposition,
+    # handed to the search node so it skips re-running that query.
+    prefetched_query: str
+    prefetched_results: Annotated[list[SearchResultItem], replace_list]
     # This round's results only; the ranker ranks these, not the history.
     round_search_results: Annotated[list[SearchResultItem], replace_list]
     # `replace_list`, NOT `operator.add`: the ranker runs after search and

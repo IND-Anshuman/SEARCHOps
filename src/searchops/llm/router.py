@@ -257,6 +257,58 @@ class LLMRouter:
                 unique_models.append(m)
         return unique_models
 
+    def fast_model(self) -> str:
+        """Lowest-latency model for cheap reasoning nodes (planner, critic).
+
+        Picks a flash/mini/lite-tier model from whichever provider the user has
+        a key for, so these short calls never ride on a heavyweight default
+        model (e.g. a 253B NIM model or a slow gpt-oss endpoint). Falls back to
+        the configured default model when no flash-tier provider is available.
+        An explicit ``LLM_FAST_MODEL`` override always wins.
+        """
+        s = self.settings
+        override = getattr(s, "fast_model", None)
+        if override:
+            return override
+
+        def _ok(secret: Any) -> bool:
+            return bool(secret and "CHANGE_ME" not in secret.get_secret_value())
+
+        if _ok(s.google_api_key):
+            return s.google_default_model
+        if _ok(s.zhipu_api_key):
+            return s.zhipu_default_model
+        if _ok(s.openai_api_key):
+            return s.openai_default_model
+        if _ok(s.anthropic_api_key):
+            return s.anthropic_default_model
+        if s.bedrock_aws_access_key_id and s.bedrock_aws_secret_access_key:
+            return s.bedrock_default_model
+        return self._resolve_default_model()
+
+    def _system_message(self, system_prompt: str, model_name: str) -> SystemMessage:
+        """System message, cache-marked for Anthropic so the fixed prompt is
+        reused across calls instead of re-processed every time.
+
+        Only Anthropic needs the explicit ``cache_control`` breakpoint; OpenAI
+        caches long prompts automatically and the other providers ignore the
+        hint, so they get a plain string.
+        """
+        if _is_claude(model_name) and not _is_bedrock(model_name):
+            return SystemMessage(
+                content=[{"type": "text", "text": system_prompt, "cache_control": {"type": "ephemeral"}}]
+            )
+        return SystemMessage(content=system_prompt)
+
+    def _build_messages(self, system_prompt: str | None, prompt: str, model_name: str) -> list[BaseMessage]:
+        """Assemble (optional system + human) messages, cache-marking the system
+        block for the active model."""
+        messages: list[BaseMessage] = []
+        if system_prompt:
+            messages.append(self._system_message(system_prompt, model_name))
+        messages.append(HumanMessage(content=prompt))
+        return messages
+
     # ── Public API ─────────────────────────────────────────────────────────
 
     async def generate(
@@ -336,10 +388,7 @@ class LLMRouter:
             active_provider = self._resolve_provider_label(active_model)
             try:
                 chat_model = self._get_model(active_model, temperature, max_tokens)
-                messages: list[BaseMessage] = []
-                if system_prompt:
-                    messages.append(SystemMessage(content=system_prompt))
-                messages.append(HumanMessage(content=prompt))
+                messages = self._build_messages(system_prompt, prompt, active_model)
 
                 response = await chat_model.ainvoke(messages)
                 response_text = str(response.content)
@@ -511,10 +560,7 @@ class LLMRouter:
                 chat_model = self._get_model(active_model, temperature, max_tokens)
                 structured_model = chat_model.with_structured_output(schema, include_raw=True)
 
-                messages: list[BaseMessage] = []
-                if system_prompt:
-                    messages.append(SystemMessage(content=system_prompt))
-                messages.append(HumanMessage(content=prompt))
+                messages = self._build_messages(system_prompt, prompt, active_model)
 
                 result = await structured_model.ainvoke(messages)
 

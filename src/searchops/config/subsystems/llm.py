@@ -69,6 +69,10 @@ class LLMSettings(BaseSettings):
         validation_alias=AliasChoices("LLM_DEFAULT_PROVIDER", "DEFAULT_PROVIDER"),
     )
     default_temperature: float = 0.0  # deterministic = cache hits
+    # Optional override for cheap reasoning nodes (planner, critic). When unset
+    # the router auto-picks a flash/mini/lite-tier model from a configured
+    # provider so short calls never ride on a heavyweight default model.
+    fast_model: str | None = Field(default=None, alias="LLM_FAST_MODEL")
     default_max_tokens: int = Field(default=4_096, alias="LLM_DEFAULT_MAX_TOKENS")
     max_prompt_chars: int = Field(default=32_000, alias="LLM_MAX_PROMPT_CHARS")
     request_timeout: float = 60.0  # shorter timeout

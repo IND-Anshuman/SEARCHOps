@@ -11,16 +11,21 @@ used to do.
 
 from __future__ import annotations
 
+import asyncio
 import re
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Any
 
 import structlog
 
 from searchops.core.context.research import ExecutionBudget, ResearchPlan
+from searchops.search.contracts import SearchQuery
+from searchops.search.domain.models import SearchProfile
 
 if TYPE_CHECKING:
     from searchops.llm.router import LLMRouter
     from searchops.orchestration.states.research_state import ResearchState
+    from searchops.search.contracts import SearchResultItem
+    from searchops.search.orchestrator import SearchOrchestrator
 
 log = structlog.get_logger(__name__)
 
@@ -52,8 +57,35 @@ def parse_sub_queries(response: str) -> list[str]:
     return out[:_MAX_SUB_QUERIES]
 
 
-async def planner_node(state: ResearchState, *, llm_router: LLMRouter) -> ResearchState:
-    """Decompose the query on round one; pass gap follow-ups through afterwards."""
+async def _prefetch_search(
+    orchestrator: SearchOrchestrator, query: str, max_results: int
+) -> list[SearchResultItem]:
+    """Run the raw query's search, stamping per-query ranks for the ranker's RRF.
+
+    Best-effort: any failure returns an empty list so the search node simply
+    runs the query itself as it always did.
+    """
+    search_fn = getattr(orchestrator, "search", None) or getattr(orchestrator, "aggregate_search", None)
+    if search_fn is None:
+        return []
+    res: list[SearchResultItem] = await search_fn(
+        SearchQuery(query=query, max_results=max_results, profile=SearchProfile.DEEP)
+    )
+    return [r.model_copy(update={"rank": i + 1}) for i, r in enumerate(res)]
+
+
+async def planner_node(
+    state: ResearchState,
+    *,
+    llm_router: LLMRouter,
+    orchestrator: SearchOrchestrator | None = None,
+) -> ResearchState:
+    """Decompose the query on round one; pass gap follow-ups through afterwards.
+
+    On round one the raw query's search is fired concurrently with the
+    decomposition LLM call, so first-page results are already arriving when the
+    sub-queries land — overlapping the planner's latency with search I/O.
+    """
     query = state.get("query", "")
     max_sources = state.get("max_sources", 5)
 
@@ -65,11 +97,29 @@ async def planner_node(state: ResearchState, *, llm_router: LLMRouter) -> Resear
     log.info("Planner node executing", query=query)
     depth = str(state.get("depth") or "standard")
     prompt = _PLANNER_PROMPT.format(query=query, n=_QUERIES_BY_DEPTH.get(depth, "4-5"))
-    response = await llm_router.generate(prompt=prompt, temperature=0.1)
+    # Cheap short-reasoning call: a fast model, and temperature 0.0 so the
+    # decomposition is deterministic and cacheable across repeat runs.
+    fast = llm_router.fast_model() if hasattr(llm_router, "fast_model") else None
+
+    # Overlap the decomposition LLM call with the raw query's search.
+    decompose_task = asyncio.ensure_future(llm_router.generate(prompt=prompt, temperature=0.0, model=fast))
+    prefetch_task: Any = None
+    if orchestrator is not None and query:
+        prefetch_task = asyncio.ensure_future(_prefetch_search(orchestrator, query, max_sources))
+
+    response = await decompose_task
     sub_queries = parse_sub_queries(response)
     if query and query.lower() not in {q.lower() for q in sub_queries}:
         # The question itself is always worth one search.
         sub_queries.insert(0, query)
+
+    prefetched: list[SearchResultItem] = []
+    if prefetch_task is not None:
+        try:
+            prefetched = await prefetch_task
+        except Exception as exc:  # pragma: no cover - prefetch is best-effort
+            log.warning("Planner prefetch search failed; search node will run it", error=str(exc))
+            prefetched = []
 
     plan = ResearchPlan(
         primary_query=query,
@@ -82,5 +132,14 @@ async def planner_node(state: ResearchState, *, llm_router: LLMRouter) -> Resear
         remaining_scrapes=max_sources,
     )
 
-    log.info("Planner generated ResearchPlan", sub_query_count=len(sub_queries))
-    return {"iteration": 0, "plan": plan, "budget": budget, "pending_queries": sub_queries}
+    log.info("Planner generated ResearchPlan", sub_query_count=len(sub_queries), prefetched=len(prefetched))
+    return {
+        "iteration": 0,
+        "plan": plan,
+        "budget": budget,
+        "pending_queries": sub_queries,
+        # Hand the search node the already-fetched raw-query results so it skips
+        # re-running that query. Empty when prefetch was unavailable or failed.
+        "prefetched_query": query if prefetched else "",
+        "prefetched_results": prefetched,
+    }

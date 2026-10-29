@@ -3,18 +3,22 @@ Deep Research LangGraph Compiled State Graph.
 
 Pipeline (post Wave-2 wiring):
 
-  START → planner → search → ranker → scrape → extract_evidence →
-         critic → verifier
+  START → planner → search → ranker → scrape → extract_evidence → critic
                           ──[gaps? & under loop cap]──→ gap_analyst ─[new queries]→ planner
-                          │                                         └─[none]→ state_pruner
-                          └─[no gaps | loop cap reached]─→ state_pruner → report_writer → evaluation → END
+                          │                                         └─[none]→ verifier
+                          └─[no gaps | loop cap reached]─────────────────────→ verifier
+         verifier → state_pruner → report_writer → evaluation → END
 
 Reflection loop semantics:
   - ``critic`` grades accumulated evidence; emits ``evidence_gaps``.
-  - ``should_continue`` routes by three signals: remaining gaps, remaining
-    budget, and ``loop_count`` against ``MAX_LOOPS``.
+  - ``should_continue`` routes off the CRITIC by three signals: remaining gaps,
+    remaining budget, and ``loop_count`` against ``MAX_LOOPS``.
   - ``gap_analyst`` converts gaps into follow-up sub-queries and re-invokes the
     planner; the planner now sees gaps + history so it does NOT duplicate work.
+  - ``verifier`` is DEFERRED to the single terminal transition: its output
+    (claim verdicts) is consumed only by the report writer, never by the loop,
+    so running it once over the full claim set — instead of once per loop —
+    saves (loops - 1) verification passes with no change in behaviour.
   - ``state_pruner`` runs ONLY on the terminal transition (no more raw-blob
     trimming mid-loop) so evidence survives the loop.
 
@@ -78,13 +82,13 @@ GRAPH_TOPOLOGY: list[tuple[str, str, str, str]] = [
     ("scrape", "Page Fetcher (Tiered Scraper)", "scrape", "No LLM call. Concurrent fetch of ranked URLs not yet read."),
     ("extract_evidence", "Evidence Extractor (Grounded Claims)", "extract", _SYSTEM_UNIFIED_EXTRACTION_PROMPT),
     ("critic", "Coverage Critic (Reflection)", "verify", _SYSTEM_CRITIC_PROMPT),
-    ("verifier", "Source Verifier (Cross-source)", "verify", _SYSTEM_VERIFY_PROMPT),
     (
         "gap_analyst",
         "Gap Analyst (Follow-up Queries)",
         "extract",
         "No LLM call. Turns coverage gaps into new search queries.",
     ),
+    ("verifier", "Source Verifier (Cross-source)", "verify", _SYSTEM_VERIFY_PROMPT),
     ("state_pruner", "Context State Pruner", "extract", "No LLM call. Captures the passage corpus for evaluation."),
     (
         "report_writer",
@@ -105,22 +109,23 @@ GRAPH_NODE_ORDER: list[str] = [entry[0] for entry in GRAPH_TOPOLOGY]
 
 
 def should_continue(state: ResearchState) -> str:
-    """3-arm loop router: re-plan on a budget / gaps / cap, else terminate."""
+    """3-arm loop router (off the critic): re-plan on gaps while under the loop
+    cap, else fall through to the single terminal ``verifier`` → synthesis pass."""
     depth = state.get("depth") or ResearchDepth.STANDARD
     loop_count = state.get("loop_count", 0)
     gaps = state.get("evidence_gaps", [])
 
     if loop_count >= _MAX_LOOPS.get(depth, 2):
-        log.info("Max research loops reached; proceeding to synthesis", loop_count=loop_count)
-        return "state_pruner"
+        log.info("Max research loops reached; verifying then synthesising", loop_count=loop_count)
+        return "verifier"
 
     open_gaps = [g for g in gaps if g.priority >= 1]
     if open_gaps:
         log.info("Research gaps remain; re-planning", gap_count=len(open_gaps), loop_count=loop_count)
         return "gap_analyst"
 
-    log.info("Evidence judged sufficient; proceeding to synthesis", loop_count=loop_count)
-    return "state_pruner"
+    log.info("Evidence judged sufficient; verifying then synthesising", loop_count=loop_count)
+    return "verifier"
 
 
 def after_gap_analysis(state: ResearchState) -> str:
@@ -131,8 +136,8 @@ def after_gap_analysis(state: ResearchState) -> str:
     """
     if state.get("pending_queries"):
         return "planner"
-    log.info("No new follow-up queries; proceeding to synthesis")
-    return "state_pruner"
+    log.info("No new follow-up queries; verifying then synthesising")
+    return "verifier"
 
 
 def build_deep_research_graph(
@@ -158,7 +163,9 @@ def build_deep_research_graph(
     graph = StateGraph(ResearchState)
 
     # Register nodes with injected dependencies via functools.partial
-    graph.add_node("planner", functools.partial(planner_node, llm_router=_llm))
+    # The planner also gets the orchestrator so round one can prefetch the raw
+    # query's search concurrently with the decomposition LLM call.
+    graph.add_node("planner", functools.partial(planner_node, llm_router=_llm, orchestrator=_orch))
     graph.add_node("search", functools.partial(search_node, orchestrator=_orch))
     graph.add_node("ranker", ranker_node)
     graph.add_node("scrape", functools.partial(scrape_node, pipeline=_pipe))
@@ -177,20 +184,22 @@ def build_deep_research_graph(
     graph.add_edge("ranker", "scrape")
     graph.add_edge("scrape", "extract_evidence")
     graph.add_edge("extract_evidence", "critic")
-    graph.add_edge("critic", "verifier")
+    # The critic decides the loop; the verifier is deferred to whichever edge
+    # terminates it, so it runs exactly once over the full claim set.
     graph.add_conditional_edges(
-        "verifier",
+        "critic",
         should_continue,
         {
             "gap_analyst": "gap_analyst",
-            "state_pruner": "state_pruner",
+            "verifier": "verifier",
         },
     )
     graph.add_conditional_edges(
         "gap_analyst",
         after_gap_analysis,
-        {"planner": "planner", "state_pruner": "state_pruner"},
+        {"planner": "planner", "verifier": "verifier"},
     )
+    graph.add_edge("verifier", "state_pruner")
     graph.add_edge("state_pruner", "report_writer")
     graph.add_edge("report_writer", "evaluation")
     graph.add_edge("evaluation", END)

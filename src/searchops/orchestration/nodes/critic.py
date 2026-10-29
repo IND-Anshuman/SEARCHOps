@@ -133,6 +133,8 @@ async def critic_node(state: ResearchState, *, llm_router: LLMRouter) -> Researc
     status = ""
     gaps_parsed: list[Any] = []
     structured = None
+    # Coverage grading is short-reasoning work: run it on the fast model.
+    fast = llm_router.fast_model() if hasattr(llm_router, "fast_model") else None
     if hasattr(llm_router, "generate_structured"):
         try:
             structured = await llm_router.generate_structured(
@@ -140,6 +142,7 @@ async def critic_node(state: ResearchState, *, llm_router: LLMRouter) -> Researc
                 schema=CriticResult,
                 system_prompt=_SYSTEM_CRITIC_PROMPT,
                 temperature=0.0,
+                model=fast,
             )
         except Exception as exc:  # pragma: no cover - defensive; cascade to text path
             log.debug("Critic structured output failed; falling back to text", error=str(exc))
@@ -153,6 +156,7 @@ async def critic_node(state: ResearchState, *, llm_router: LLMRouter) -> Researc
             prompt=prompt,
             system_prompt=_SYSTEM_CRITIC_PROMPT,
             temperature=0.0,
+            model=fast,
         )
         parsed = _clean_json(raw)
         status = str(parsed.get("status", "")).strip().upper()

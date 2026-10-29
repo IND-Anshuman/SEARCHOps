@@ -5,7 +5,7 @@ Unit tests for LangGraph orchestration: state, nodes, and graph compilation.
 from __future__ import annotations
 
 from typing import TYPE_CHECKING
-from unittest.mock import AsyncMock
+from unittest.mock import AsyncMock, MagicMock
 
 import pytest
 
@@ -55,7 +55,10 @@ async def test_planner_node():
         "2. Practical applications of quantum algorithms\n"
         "3. Quantum hardware landscape 2024"
     )
+    # fast_model() is a synchronous resolver, not a coroutine.
+    mock_llm.fast_model = MagicMock(return_value=None)
     state: ResearchState = {"query": "quantum computing", "max_sources": 5}
+    # No orchestrator → the raw-query prefetch is skipped; decomposition only.
     result = await planner_node(state, llm_router=mock_llm)
 
     assert result["iteration"] == 0
